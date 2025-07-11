@@ -540,40 +540,52 @@ void ProcessTradeDecisions() {
     }
 
     double currentPoint = _Point; // Point size
-    double tp = TakeProfitPips * currentPoint;
-    double sl = StopLossPips * currentPoint;
+    double tp_calc = TakeProfitPips * currentPoint; // Renamed to avoid conflict
+    double sl_calc = StopLossPips * currentPoint; // Renamed to avoid conflict
 
     // Ensure TP/SL are at least minimum distance if broker requires
-    double minStopLevel = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
-    if (tp < minStopLevel) tp = minStopLevel;
-    if (sl < minStopLevel) sl = minStopLevel;
-
+    double stops_level_val;
+    if(!SymbolInfoDouble(_Symbol, SYMBOL_TRADE_STOPS_LEVEL, stops_level_val)) {
+        printf("Error getting SYMBOL_TRADE_STOPS_LEVEL: %d. Assuming 0.", GetLastError());
+        stops_level_val = 0; // Default or handle error more gracefully
+    }
+    double minStopDistance = stops_level_val * _Point;
+    if (tp_calc < minStopDistance) tp_calc = minStopDistance;
+    if (sl_calc < minStopDistance) sl_calc = minStopDistance;
 
     if (BuyVotes > SellVotes) {
-        double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-        double takeProfitLevel = price + tp;
-        double stopLossLevel = price - sl;
+        double ask_price;
+        if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask_price)) {
+            printf("Error getting SYMBOL_ASK for Buy: %d. Aborting trade.", GetLastError());
+            return;
+        }
+        double takeProfitLevel = ask_price + tp_calc;
+        double stopLossLevel = ask_price - sl_calc;
         // Normalize SL/TP
         takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
         stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
 
-        if(trade.Buy(LotSize, _Symbol, price, stopLossLevel, takeProfitLevel, "AdvancedEA_Buy_MQL5")) {
+        if(trade.Buy(LotSize, _Symbol, ask_price, stopLossLevel, takeProfitLevel, "AdvancedEA_Buy_MQL5")) {
             printf("BUY order placed successfully. Price: %s, TP: %s, SL: %s, Result: %s",
-                   DoubleToString(price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
+                   DoubleToString(ask_price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
         } else {
             printf("Error placing BUY order: %s (Code: %d)", trade.ResultComment(), trade.ResultRetcode());
         }
     } else if (SellVotes > BuyVotes) {
-        double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-        double takeProfitLevel = price - tp;
-        double stopLossLevel = price + sl;
+        double bid_price;
+        if(!SymbolInfoDouble(_Symbol, SYMBOL_BID, bid_price)) {
+            printf("Error getting SYMBOL_BID for Sell: %d. Aborting trade.", GetLastError());
+            return;
+        }
+        double takeProfitLevel = bid_price - tp_calc;
+        double stopLossLevel = bid_price + sl_calc;
         // Normalize SL/TP
         takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
         stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
 
-        if(trade.Sell(LotSize, _Symbol, price, stopLossLevel, takeProfitLevel, "AdvancedEA_Sell_MQL5")) {
+        if(trade.Sell(LotSize, _Symbol, bid_price, stopLossLevel, takeProfitLevel, "AdvancedEA_Sell_MQL5")) {
             printf("SELL order placed successfully. Price: %s, TP: %s, SL: %s, Result: %s",
-                   DoubleToString(price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
+                   DoubleToString(bid_price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
         } else {
             printf("Error placing SELL order: %s (Code: %d)", trade.ResultComment(), trade.ResultRetcode());
         }
