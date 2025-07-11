@@ -94,8 +94,8 @@ int OnInit() {
     hTrendMASlow = iMA(_Symbol, _Period, TrendMA_Slow_Period, 0, MODE_EMA, PRICE_CLOSE);
     if(hTrendMASlow == INVALID_HANDLE) { printf("Error creating Trend Slow MA indicator"); return(INIT_FAILED); }
 
-    hZigZag = iCustom(_Symbol, _Period, "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
-    if(hZigZag == INVALID_HANDLE) { printf("Error creating ZigZag indicator"); return(INIT_FAILED); }
+    hZigZag = iCustom(_Symbol, _Period, "Examples\\ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
+    if(hZigZag == INVALID_HANDLE) { printf("Error creating ZigZag indicator (check path 'Examples\\\\ZigZag')"); return(INIT_FAILED); }
     IndicatorSetInteger(INDICATOR_DIGITS, _Digits); // For ZigZag display if needed
 
     hBands = iBands(_Symbol, _Period, BB_Period, 0, BB_Deviation, PRICE_CLOSE);
