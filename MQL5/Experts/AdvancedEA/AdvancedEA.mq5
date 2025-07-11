@@ -544,18 +544,17 @@ void ProcessTradeDecisions() {
     double sl_calc = StopLossPips * currentPoint; // Renamed to avoid conflict
 
     // Ensure TP/SL are at least minimum distance if broker requires
-    double stops_level_val;
-    if(!SymbolInfoDouble(_Symbol, SYMBOL_TRADE_STOPS_LEVEL, stops_level_val)) {
-        printf("Error getting SYMBOL_TRADE_STOPS_LEVEL: %d. Assuming 0.", GetLastError());
-        stops_level_val = 0; // Default or handle error more gracefully
-    }
-    double minStopDistance = stops_level_val * _Point;
+    long stops_level_points = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    // printf("Debug: stops_level_points for SYMBOL_TRADE_STOPS_LEVEL: %ld", stops_level_points); // Optional debug print
+
+    double minStopDistance = stops_level_points * _Point;
     if (tp_calc < minStopDistance) tp_calc = minStopDistance;
     if (sl_calc < minStopDistance) sl_calc = minStopDistance;
 
+
     if (BuyVotes > SellVotes) {
         double ask_price;
-        if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask_price)) {
+        if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask_price)) { // SYMBOL_ASK is correctly double
             printf("Error getting SYMBOL_ASK for Buy: %d. Aborting trade.", GetLastError());
             return;
         }
