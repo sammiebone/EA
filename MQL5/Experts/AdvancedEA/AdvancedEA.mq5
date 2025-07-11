@@ -45,6 +45,7 @@ input double   VolatilityThresholdMultiplier = 0.5; // Multiplier for ATR/BB Wid
 
 //--- Global Variables
 datetime LastAnalysisTime = 0;
+int      g_EffectiveWaitPeriodMinutes; // To avoid input modification issues
 int      BuyVotes = 0;
 int      SellVotes = 0;
 ulong    MagicNumberBase; // Will be constructed in OnInit
@@ -68,15 +69,17 @@ CTrade   trade;
 int OnInit() {
     //---
     if (WaitPeriodMinutes < 1) {
-        printf("WaitPeriodMinutes cannot be less than 1. Setting to 1.");
-        WaitPeriodMinutes = 1;
+        printf("Input WaitPeriodMinutes '%d' is less than 1. Effective wait period set to 1 minute.", WaitPeriodMinutes);
+        g_EffectiveWaitPeriodMinutes = 1;
+    } else {
+        g_EffectiveWaitPeriodMinutes = WaitPeriodMinutes;
     }
     // Generate a unique magic number for this chart instance
     MagicNumberBase = StringToInteger(Symbol()) + Period() + StringToInteger(MagicNumberSuffix);
 
-    LastAnalysisTime = TimeCurrent() - (WaitPeriodMinutes * 60); // Ensure first run
-    printf("AdvancedEA Initialized. MaxOrders: %d, LotSize: %.2f, TP: %d, SL: %d, Wait: %d, Magic: %llu",
-           MaxOrders, LotSize, TakeProfitPips, StopLossPips, WaitPeriodMinutes, MagicNumberBase);
+    LastAnalysisTime = TimeCurrent() - (g_EffectiveWaitPeriodMinutes * 60); // Ensure first run
+    printf("AdvancedEA Initialized. MaxOrders: %d, LotSize: %.2f, TP: %d, SL: %d, EffectiveWait: %d, Magic: %llu",
+           MaxOrders, LotSize, TakeProfitPips, StopLossPips, g_EffectiveWaitPeriodMinutes, MagicNumberBase);
 
     //--- Initialize indicators
     hSMA = iMA(_Symbol, _Period, SMA_Period, 0, MODE_SMA, PRICE_CLOSE);
@@ -124,7 +127,7 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void OnTick() {
     //--- Check if it's time to analyze
-    if (TimeCurrent() - LastAnalysisTime >= WaitPeriodMinutes * 60) {
+    if (TimeCurrent() - LastAnalysisTime >= g_EffectiveWaitPeriodMinutes * 60) {
          MqlRates rates[];
          if(CopyRates(_Symbol, _Period, 0, 1, rates) > 0) { // Check if new bar started for the current timeframe
             static datetime lastBarTime = 0;

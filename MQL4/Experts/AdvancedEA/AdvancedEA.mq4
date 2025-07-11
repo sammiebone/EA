@@ -29,6 +29,7 @@ input int      ADX_Period        = 14;       // ADX Period for Trend Riding
 
 //--- Global Variables
 datetime LastAnalysisTime = 0;
+int      g_EffectiveWaitPeriodMinutes; // Renamed for clarity and to avoid input modification issues
 int      BuyVotes = 0;
 int      SellVotes = 0;
 
@@ -40,11 +41,13 @@ int      SellVotes = 0;
 int OnInit() {
     //---
     if (WaitPeriodMinutes < 1) {
-        Print("WaitPeriodMinutes cannot be less than 1. Setting to 1.");
-        WaitPeriodMinutes = 1;
+        Print("Input WaitPeriodMinutes '", WaitPeriodMinutes, "' is less than 1. Effective wait period set to 1 minute.");
+        g_EffectiveWaitPeriodMinutes = 1;
+    } else {
+        g_EffectiveWaitPeriodMinutes = WaitPeriodMinutes;
     }
-    LastAnalysisTime = TimeCurrent() - (WaitPeriodMinutes * 60); // Ensure first run
-    Print("AdvancedEA Initialized. MaxOrders: ", MaxOrders, ", LotSize: ", LotSize, ", TP: ", TakeProfitPips, ", SL: ", StopLossPips, ", Wait: ", WaitPeriodMinutes);
+    LastAnalysisTime = TimeCurrent() - (g_EffectiveWaitPeriodMinutes * 60); // Ensure first run
+    Print("AdvancedEA Initialized. MaxOrders: ", MaxOrders, ", LotSize: ", LotSize, ", TP: ", TakeProfitPips, ", SL: ", StopLossPips, ", EffectiveWait: ", g_EffectiveWaitPeriodMinutes);
     //---
     return(INIT_SUCCEEDED);
 }
@@ -63,7 +66,7 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void OnTick() {
     //--- Check if it's time to analyze
-    if (TimeCurrent() - LastAnalysisTime >= WaitPeriodMinutes * 60) {
+    if (TimeCurrent() - LastAnalysisTime >= g_EffectiveWaitPeriodMinutes * 60) {
         if(IsNewBar()){ // Optional: Only run on new bar within the minute interval
             Print("Analyzing market...");
             ResetVotes();
