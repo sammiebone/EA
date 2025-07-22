@@ -13,10 +13,12 @@
 
 //--- Input Parameters
 input group "General Settings"
-input int      MaxOrders         = 2;        // Maximum number of open positions
-input double   LotSize           = 0.01;     // Fixed Lot Size
-input int      TakeProfitPips    = 50;       // Take Profit in Pips
-input int      StopLossPips      = 25;       // Stop Loss in Pips
+input int      MaxOrders         = 50;       // Maximum number of trade SETS
+input double   LotSize           = 0.03;     // Total Lot Size for a set of 3 orders
+input int      TakeProfitPips1   = 50;       // Take Profit for 1st partial order
+input int      TakeProfitPips2   = 100;      // Take Profit for 2nd partial order
+input int      TakeProfitPips3   = 150;      // Take Profit for 3rd partial order
+input int      InitialStopLossPips = 500;    // Initial Stop Loss for all partial orders
 input int      WaitPeriodMinutes = 1;        // Wait period in minutes for re-analysis
 input string   MagicNumberSuffix = "AdvEA";  // Suffix for Magic Number
 
@@ -78,8 +80,8 @@ int OnInit() {
     MagicNumberBase = StringToInteger(Symbol()) + Period() + StringToInteger(MagicNumberSuffix);
 
     LastAnalysisTime = TimeCurrent() - (g_EffectiveWaitPeriodMinutes * 60); // Ensure first run
-    printf("AdvancedEA Initialized. MaxOrders: %d, LotSize: %.2f, TP: %d, SL: %d, EffectiveWait: %d, Magic: %llu",
-           MaxOrders, LotSize, TakeProfitPips, StopLossPips, g_EffectiveWaitPeriodMinutes, MagicNumberBase);
+    printf("AdvancedEA Initialized. MaxOrders (Sets): %d, Total LotSize: %.2f, TP1: %d, TP2: %d, TP3: %d, InitialSL: %d, EffectiveWait: %d, MagicSuffix: %s",
+           MaxOrders, LotSize, TakeProfitPips1, TakeProfitPips2, TakeProfitPips3, InitialStopLossPips, g_EffectiveWaitPeriodMinutes, MagicNumberSuffix); // MagicNumberBase is ulong
 
     //--- Initialize indicators
     hSMA = iMA(_Symbol, _Period, SMA_Period, 0, MODE_SMA, PRICE_CLOSE);
@@ -128,19 +130,23 @@ void OnDeinit(const int reason) {
 void OnTick() {
     //--- Check if it's time to analyze
     if (TimeCurrent() - LastAnalysisTime >= g_EffectiveWaitPeriodMinutes * 60) {
+         // It's time to check. Reset the timer for the next interval.
+         LastAnalysisTime = TimeCurrent();
+
          MqlRates rates[];
          if(CopyRates(_Symbol, _Period, 0, 1, rates) > 0) { // Check if new bar started for the current timeframe
             static datetime lastBarTime = 0;
             if (rates[0].time != lastBarTime) {
                 lastBarTime = rates[0].time;
-                printf("Analyzing market...");
+                printf("New bar detected. Analyzing market...");
                 ResetVotes();
                 AnalyzeStrategies();
                 ProcessTradeDecisions();
-                LastAnalysisTime = TimeCurrent();
             }
          }
     }
+    // Call trade management on every tick
+    ManageOpenTrades();
 }
 
 //+------------------------------------------------------------------+
@@ -535,40 +541,83 @@ void AnalyzeSmartMoneyConcepts() {
 //+------------------------------------------------------------------+
 void ProcessTradeDecisions() {
     if (CountOpenPositions() >= MaxOrders) {
-        printf("Max positions reached (%d). No new trade.", CountOpenPositions());
+        printf("Max positions reached (%d sets). No new trade.", CountOpenPositions());
         return;
     }
 
+    // Lot Size Calculation for 3 partial orders
+    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+    double partialLotSize = LotSize / 3.0;
+
+    // Normalize to lot step
+    partialLotSize = MathRound(partialLotSize / lotStep) * lotStep;
+
+    // Enforce minimum lot size
+    if (partialLotSize < minLot) {
+        partialLotSize = minLot;
+    }
+
+    // Enforce maximum lot size (per partial order, though total LotSize should also be checked ideally)
+    if (partialLotSize > maxLot) {
+        partialLotSize = maxLot; // This case is less likely if total LotSize is reasonable
+    }
+
+    // Final check if total requested lot is too small to be split even into minLot partials
+    if (partialLotSize * 3.0 > LotSize + lotStep) { // Adding lotStep for a small tolerance
+         printf("Total LotSize %.2f is too small to be split into 3 valid partial orders for symbol %s (min partial: %.2f). Min total needed: %.2f. Aborting.",
+               LotSize, _Symbol, minLot, minLot * 3.0);
+        return;
+    }
+    if (partialLotSize == 0) { // Should be caught by minLot, but as a safeguard
+        printf("Calculated partial lot size is zero. Aborting trade. Check LotSize input and symbol volume limits.");
+        return;
+    }
+
+
     double currentPoint = _Point; // Point size
-    double tp_calc = TakeProfitPips * currentPoint; // Renamed to avoid conflict
-    double sl_calc = StopLossPips * currentPoint; // Renamed to avoid conflict
+    // TP and SL pips will be used per order
+    long initial_sl_points_val = InitialStopLossPips; // Use the input directly for SL pips
+    int tp_pips[] = {TakeProfitPips1, TakeProfitPips2, TakeProfitPips3};
 
-    // Ensure TP/SL are at least minimum distance if broker requires
-    long stops_level_points = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-    // printf("Debug: stops_level_points for SYMBOL_TRADE_STOPS_LEVEL: %ld", stops_level_points); // Optional debug print
-
-    double minStopDistance = stops_level_points * _Point;
-    if (tp_calc < minStopDistance) tp_calc = minStopDistance;
-    if (sl_calc < minStopDistance) sl_calc = minStopDistance;
-
+    // Min distance for SL/TP from current price
+    long stops_level_raw_points = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    // printf("Debug: stops_level_raw_points for SYMBOL_TRADE_STOPS_LEVEL: %ld", stops_level_raw_points);
 
     if (BuyVotes > SellVotes) {
         double ask_price;
-        if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask_price)) { // SYMBOL_ASK is correctly double
+        if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask_price)) {
             printf("Error getting SYMBOL_ASK for Buy: %d. Aborting trade.", GetLastError());
             return;
         }
-        double takeProfitLevel = ask_price + tp_calc;
-        double stopLossLevel = ask_price - sl_calc;
-        // Normalize SL/TP
-        takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
-        stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
+        printf("Attempting to place BUY orders (3 partials)... Ask: %.5f, PartialLot: %.2f", ask_price, partialLotSize);
 
-        if(trade.Buy(LotSize, _Symbol, ask_price, stopLossLevel, takeProfitLevel, "AdvancedEA_Buy_MQL5")) {
-            printf("BUY order placed successfully. Price: %s, TP: %s, SL: %s, Result: %s",
-                   DoubleToString(ask_price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
-        } else {
-            printf("Error placing BUY order: %s (Code: %d)", trade.ResultComment(), trade.ResultRetcode());
+        for (int i = 0; i < 3; i++) {
+            trade.SetExpertMagicNumber(MagicNumberBase + (ulong)i); // Set unique magic for each partial
+
+            double tp_distance_pips = tp_pips[i] * currentPoint;
+            double sl_distance_pips = initial_sl_points_val * currentPoint;
+
+            // Ensure TP/SL distances respect minimum stop level distance
+            if (tp_distance_pips < stops_level_raw_points * currentPoint) tp_distance_pips = stops_level_raw_points * currentPoint;
+            if (sl_distance_pips < stops_level_raw_points * currentPoint) sl_distance_pips = stops_level_raw_points * currentPoint;
+
+            double takeProfitLevel = ask_price + tp_distance_pips;
+            double stopLossLevel = ask_price - sl_distance_pips;
+
+            takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
+            stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
+
+            string comment = StringFormat("AdvEA_Buy_P%d_SL%d_TP%d", i + 1, InitialStopLossPips, tp_pips[i]);
+
+            if(trade.Buy(partialLotSize, _Symbol, ask_price, stopLossLevel, takeProfitLevel, comment)) {
+                printf("BUY order #%d (Magic: %llu) placed successfully. Price: %.5f, Lot: %.2f, TP: %.5f (Pips: %d), SL: %.5f (Pips: %d), Result: %s",
+                       i+1, MagicNumberBase + (ulong)i, ask_price, partialLotSize, takeProfitLevel, tp_pips[i], stopLossLevel, InitialStopLossPips, trade.ResultComment());
+            } else {
+                printf("Error placing BUY order #%d (Magic: %llu): %s (Code: %d)", i+1, MagicNumberBase + (ulong)i, trade.ResultComment(), trade.ResultRetcode());
+            }
         }
     } else if (SellVotes > BuyVotes) {
         double bid_price;
@@ -576,17 +625,32 @@ void ProcessTradeDecisions() {
             printf("Error getting SYMBOL_BID for Sell: %d. Aborting trade.", GetLastError());
             return;
         }
-        double takeProfitLevel = bid_price - tp_calc;
-        double stopLossLevel = bid_price + sl_calc;
-        // Normalize SL/TP
-        takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
-        stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
+        printf("Attempting to place SELL orders (3 partials)... Bid: %.5f, PartialLot: %.2f", bid_price, partialLotSize);
 
-        if(trade.Sell(LotSize, _Symbol, bid_price, stopLossLevel, takeProfitLevel, "AdvancedEA_Sell_MQL5")) {
-            printf("SELL order placed successfully. Price: %s, TP: %s, SL: %s, Result: %s",
-                   DoubleToString(bid_price,_Digits), DoubleToString(takeProfitLevel,_Digits), DoubleToString(stopLossLevel,_Digits), trade.ResultComment());
-        } else {
-            printf("Error placing SELL order: %s (Code: %d)", trade.ResultComment(), trade.ResultRetcode());
+        for (int i = 0; i < 3; i++) {
+            trade.SetExpertMagicNumber(MagicNumberBase + (ulong)i); // Set unique magic for each partial
+
+            double tp_distance_pips = tp_pips[i] * currentPoint;
+            double sl_distance_pips = initial_sl_points_val * currentPoint;
+
+            // Ensure TP/SL distances respect minimum stop level distance
+            if (tp_distance_pips < stops_level_raw_points * currentPoint) tp_distance_pips = stops_level_raw_points * currentPoint;
+            if (sl_distance_pips < stops_level_raw_points * currentPoint) sl_distance_pips = stops_level_raw_points * currentPoint;
+
+            double takeProfitLevel = bid_price - tp_distance_pips;
+            double stopLossLevel = bid_price + sl_distance_pips;
+
+            takeProfitLevel = NormalizeDouble(takeProfitLevel, _Digits);
+            stopLossLevel = NormalizeDouble(stopLossLevel, _Digits);
+
+            string comment = StringFormat("AdvEA_Sell_P%d_SL%d_TP%d", i + 1, InitialStopLossPips, tp_pips[i]);
+
+            if(trade.Sell(partialLotSize, _Symbol, bid_price, stopLossLevel, takeProfitLevel, comment)) {
+                printf("SELL order #%d (Magic: %llu) placed successfully. Price: %.5f, Lot: %.2f, TP: %.5f (Pips: %d), SL: %.5f (Pips: %d), Result: %s",
+                       i+1, MagicNumberBase + (ulong)i, bid_price, partialLotSize, takeProfitLevel, tp_pips[i], stopLossLevel, InitialStopLossPips, trade.ResultComment());
+            } else {
+                printf("Error placing SELL order #%d (Magic: %llu): %s (Code: %d)", i+1, MagicNumberBase + (ulong)i, trade.ResultComment(), trade.ResultRetcode());
+            }
         }
     } else {
         printf("No trade signal: BuyVotes (%d) == SellVotes (%d)", BuyVotes, SellVotes);
@@ -596,17 +660,150 @@ void ProcessTradeDecisions() {
 //+------------------------------------------------------------------+
 //| Count Open Positions for the current symbol and EA               |
 //+------------------------------------------------------------------+
-int CountOpenPositions() {
-    int count = 0;
+int CountOpenPositions() { // Counts the number of "sets" of trades
+    int setCount = 0;
     for (int i = PositionsTotal() - 1; i >= 0; i--) {
         ulong position_ticket = PositionGetTicket(i);
         if (position_ticket > 0) {
-            if (PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumberBase) {
-                count++;
+            // A "set" is identified by its first partial order's magic number.
+            // The first partial order of a set opened by this EA instance has magic number MagicNumberBase + 0.
+            if (PositionGetString(POSITION_SYMBOL) == _Symbol &&
+                PositionGetInteger(POSITION_MAGIC) == (MagicNumberBase + 0) ) { // Check for the first partial of a set
+                setCount++;
             }
         }
     }
-    return count;
+    return setCount;
 }
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Manage Open Trades (e.g., for Breakeven)                         |
+//+------------------------------------------------------------------+
+// Helper function to check if a ticket exists in our tracking array
+bool IsTicketInArray(ulong ticket, const ulong &tickets_array[]) {
+    for (int i = 0; i < ArraySize(tickets_array); i++) {
+        if (tickets_array[i] == ticket) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static ulong BreakevenTriggeredForTP1DealTickets[]; // Stores deal tickets of TP1s that triggered BE
+
+void ManageOpenTrades() {
+    // --- Breakeven Logic ---
+    // If TP1 of a set is hit, move SL of TP2 and TP3 to Breakeven for that set.
+
+    if (!HistorySelect(0, TimeCurrent())) {
+        printf("ManageOpenTrades: Error selecting history! Code: %d", GetLastError());
+        return;
+    }
+
+    int deals = HistoryDealsTotal();
+    for (int i = deals - 1; i >= 0; i--) { // Iterate backwards for potentially better performance on recent deals
+        ulong deal_ticket = HistoryDealGetTicket(i);
+        if (deal_ticket == 0) continue;
+
+        // Check if this deal_ticket has already triggered a breakeven action
+        if (IsTicketInArray(deal_ticket, BreakevenTriggeredForTP1DealTickets)) {
+            continue;
+        }
+
+        long deal_magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+        string deal_symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+        long deal_entry_type = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY); // DEAL_ENTRY_OUT means it's a closing deal
+        long deal_reason = HistoryDealGetInteger(deal_ticket, DEAL_REASON);   // DEAL_REASON_TP means closed by TakeProfit
+
+        // Identify the base magic for the set this deal belongs to.
+        // Our set magics are: set_base, set_base+1, set_base+2
+        // The deal_magic for TP1 is 'set_base + 0'.
+        // So, if (deal_magic - MagicNumberBase) % 10 == 0, it's a TP1. (This assumes MagicNumberBase itself is a multiple of 10 or 0)
+        // And the set_base for this deal would be deal_magic itself if it's a TP1.
+
+        bool isTP1 = false;
+        ulong currentSetBaseMagicForDeal = 0;
+
+        // Check if this deal's magic is a "base + 0" for a set from THIS EA instance
+        // This logic assumes MagicNumberBase from OnInit is the absolute start,
+        // and set identifiers are effectively (MagicNumberBase + some_offset_multiple_of_10)
+        // The actual magic for TP1 is `set_actual_base_magic + 0`
+        // Let's assume the magic numbers set during trade placement are:
+        // TP1: unique_set_base_magic + 0
+        // TP2: unique_set_base_magic + 1
+        // TP3: unique_set_base_magic + 2
+        // The `trade.SetExpertMagicNumber(MagicNumberBase + (ulong)i)` in ProcessTradeDecisions
+        // means for a single EA instance, the sets are NOT distinguished by unique base magics yet.
+        // The current magic scheme is: EA_Instance_MagicBase+0, EA_Instance_MagicBase+1, EA_Instance_MagicBase+2.
+        // This means if MaxOrders > 1, this BE logic will apply to ALL TP2/TP3s of this EA instance if ANY TP1 hits.
+        // This is a simplification for now as per the current magic number strategy in ProcessTradeDecisions.
+
+        if (deal_symbol == _Symbol &&
+            deal_magic == (MagicNumberBase + 0) && // This is the TP1 for THIS EA instance's general set structure
+            deal_entry_type == DEAL_ENTRY_OUT &&
+            deal_reason == DEAL_REASON_TP) {
+
+            isTP1 = true;
+            currentSetBaseMagicForDeal = MagicNumberBase; // The "set" is identified by the EA's instance MagicNumberBase
+
+            // Mark this TP1 deal as processed for BE to avoid redundant actions
+            int currentSize = ArraySize(BreakevenTriggeredForTP1DealTickets);
+            ArrayResize(BreakevenTriggeredForTP1DealTickets, currentSize + 1);
+            BreakevenTriggeredForTP1DealTickets[currentSize] = deal_ticket;
+
+            printf("ManageOpenTrades: TP1 (Deal Ticket: %llu, Magic: %llu) hit TP. Processing BE for siblings.", deal_ticket, deal_magic);
+
+            // Now find open sibling positions (TP2 and TP3) for this EA's set structure
+            for (int j = PositionsTotal() - 1; j >= 0; j--) {
+                ulong pos_ticket = PositionGetTicket(j);
+                if (pos_ticket == 0) continue;
+
+                // Select position to work with its properties
+                if(PositionSelectByTicket(pos_ticket)) {
+                    long pos_magic = PositionGetInteger(POSITION_MAGIC);
+                    string pos_symbol = PositionGetString(POSITION_SYMBOL);
+
+                    if (pos_symbol == _Symbol &&
+                       (pos_magic == (currentSetBaseMagicForDeal + 1) || pos_magic == (currentSetBaseMagicForDeal + 2))) {
+
+                        double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+                        double current_sl = PositionGetDouble(POSITION_SL);
+                        double current_tp = PositionGetDouble(POSITION_TP); // Keep original TP
+
+                        // Check if SL is already at breakeven (or better for buys, worse for sells - meaning already past BE)
+                        ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                        bool already_at_be = false;
+                        if(pos_type == POSITION_TYPE_BUY && current_sl >= open_price) already_at_be = true;
+                        if(pos_type == POSITION_TYPE_SELL && current_sl <= open_price) already_at_be = true;
+                        if(current_sl == 0 && open_price ==0) already_at_be = false; // SL not set case
+
+                        if (MathAbs(current_sl - open_price) > _Point * 0.1 && !already_at_be ) { // Check if SL is not already BE (with small tolerance)
+                            printf("ManageOpenTrades: Moving SL to BE for Ticket: %llu (Magic: %llu), Open: %.5f", pos_ticket, pos_magic, open_price);
+
+                            // Set SL to open_price. TP remains the same.
+                            // CTrade::PositionModify expects SL and TP levels, not pips.
+                            if (trade.PositionModify(pos_ticket, open_price, current_tp)) {
+                                printf("ManageOpenTrades: Successfully moved SL to BE for Ticket %llu. New SL: %.5f", pos_ticket, open_price);
+                            } else {
+                                printf("ManageOpenTrades: Failed to move SL to BE for Ticket %llu. Error: %s (Code: %d)",
+                                       pos_ticket, trade.ResultComment(), trade.ResultRetcode());
+                            }
+                        } else {
+                             printf("ManageOpenTrades: SL for Ticket %llu (Magic: %llu) is already at/past breakeven or not set. Current SL: %.5f, Open: %.5f", pos_ticket, pos_magic, current_sl, open_price);
+                        }
+                    }
+                }
+            }
+            // Since we found and processed the relevant TP1 deal for this EA's set structure,
+            // and assuming only one "active" set structure at a time for this BE logic, we can break.
+            // If multiple sets could have their TP1 hit simultaneously, this break might be premature.
+            // However, BreakevenTriggeredForTP1DealTickets should prevent re-processing the same TP1 deal.
+            // For now, let's assume one TP1 hit event is processed per ManageOpenTrades call for this EA's general set.
+            break;
+        }
+    }
+}
+
 //+------------------------------------------------------------------+
 // --- End of File ---

@@ -67,12 +67,14 @@ void OnDeinit(const int reason) {
 void OnTick() {
     //--- Check if it's time to analyze
     if (TimeCurrent() - LastAnalysisTime >= g_EffectiveWaitPeriodMinutes * 60) {
+        // It's time to check. Reset the timer for the next interval.
+        LastAnalysisTime = TimeCurrent();
+
         if(IsNewBar()){ // Optional: Only run on new bar within the minute interval
-            Print("Analyzing market...");
+            Print("New bar detected. Analyzing market...");
             ResetVotes();
             AnalyzeStrategies();
             ProcessTradeDecisions();
-            LastAnalysisTime = TimeCurrent();
         }
     }
 }
