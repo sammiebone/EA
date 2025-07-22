@@ -138,16 +138,18 @@ void AnalyzeSMA20() {
 
     if (closePrice1 > smaValue && closePrice2 <= smaValue) { // Price crossed above SMA
         BuyVotes++;
-        Print("SMA20: Buy Signal (Crossed Above)");
+        Print("Strategy [SMA20]: Buy Signal (Price crossed above SMA).");
     } else if (closePrice1 < smaValue && closePrice2 >= smaValue) { // Price crossed below SMA
         SellVotes++;
-        Print("SMA20: Sell Signal (Crossed Below)");
+        Print("Strategy [SMA20]: Sell Signal (Price crossed below SMA).");
     } else if (closePrice1 > smaValue) {
         BuyVotes++; // Price is above SMA - bullish bias
-        Print("SMA20: Buy Signal (Above SMA)");
+        Print("Strategy [SMA20]: Buy Signal (Price is above SMA).");
     } else if (closePrice1 < smaValue) {
         SellVotes++; // Price is below SMA - bearish bias
-        Print("SMA20: Sell Signal (Below SMA)");
+        Print("Strategy [SMA20]: Sell Signal (Price is below SMA).");
+    } else {
+        Print("Strategy [SMA20]: No signal.");
     }
 }
 
@@ -163,27 +165,37 @@ void AnalyzeTrendRiding() {
     double slowMA = iMA(Symbol(), Period(), TrendMA_Slow_Period, 0, MODE_EMA, PRICE_CLOSE, 0);
 
     // Check for trend strength
+    bool signalFound = false;
     if (adxValue > 25) { // Trend is considered strong enough
         if (plusDI > minusDI && fastMA > slowMA) { // Uptrend
             // Optional: Check for pullback to fast MA or entry condition
             if (iClose(Symbol(), Period(), 1) > fastMA && iLow(Symbol(), Period(), 1) <= fastMA) { // Pullback to Fast MA in uptrend
                  BuyVotes++;
-                 Print("TrendRiding: Buy Signal (Uptrend with pullback)");
+                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend with pullback to Fast MA).");
+                 signalFound = true;
             } else if (iClose(Symbol(), Period(), 1) > slowMA && iClose(Symbol(), Period(), 2) <= slowMA) { // Cross above slow MA
                  BuyVotes++;
-                 Print("TrendRiding: Buy Signal (Uptrend, cross slow MA)");
+                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend, price crossed Slow MA).");
+                 signalFound = true;
             }
         } else if (minusDI > plusDI && fastMA < slowMA) { // Downtrend
             if (iClose(Symbol(), Period(), 1) < fastMA && iHigh(Symbol(), Period(), 1) >= fastMA) { // Pullback to Fast MA in downtrend
                  SellVotes++;
-                 Print("TrendRiding: Sell Signal (Downtrend with pullback)");
+                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend with pullback to Fast MA).");
+                 signalFound = true;
             } else if (iClose(Symbol(), Period(), 1) < slowMA && iClose(Symbol(), Period(), 2) >= slowMA) { // Cross below slow MA
                  SellVotes++;
-                 Print("TrendRiding: Sell Signal (Downtrend, cross slow MA)");
+                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend, price crossed Slow MA).");
+                 signalFound = true;
             }
         }
     } else {
-        Print("TrendRiding: No strong trend (ADX < 25)");
+        Print("Strategy [TrendRiding]: No signal (ADX < 25 indicates weak trend).");
+        signalFound = true;
+    }
+
+    if(!signalFound) {
+        Print("Strategy [TrendRiding]: No signal (Trending conditions not met).");
     }
 }
 
@@ -215,7 +227,7 @@ void AnalyzeZigZagBreakout() {
     }
 
     if (lastHighZigZag == 0 || lastLowZigZag == 0) {
-        Print("ZigZag: Could not find recent ZigZag points.");
+        Print("Strategy [ZigZag]: No signal (Could not find recent ZigZag points).");
         return;
     }
 
@@ -226,12 +238,14 @@ void AnalyzeZigZagBreakout() {
     // Breakout above last significant ZigZag high
     if (prevClose > lastHighZigZag && currentHigh > lastHighZigZag) { // Ensure current bar also supports breakout
         BuyVotes++;
-        Print("ZigZag: Buy Signal (Breakout above ", DoubleToString(lastHighZigZag, Digits), ")");
+        Print("Strategy [ZigZag]: Buy Signal (Breakout above last high ", DoubleToString(lastHighZigZag, Digits), ").");
     }
     // Breakout below last significant ZigZag low
     else if (prevClose < lastLowZigZag && currentLow < lastLowZigZag) { // Ensure current bar also supports breakout
         SellVotes++;
-        Print("ZigZag: Sell Signal (Breakout below ", DoubleToString(lastLowZigZag, Digits), ")");
+        Print("Strategy [ZigZag]: Sell Signal (Breakout below last low ", DoubleToString(lastLowZigZag, Digits), ").");
+    } else {
+        Print("Strategy [ZigZag]: No signal (Price is within last ZigZag high/low).");
     }
 }
 
@@ -267,19 +281,20 @@ void AnalyzeDecreasedVolatilityBreakout() {
 
     // Check if current bandwidth is significantly lower than average (squeeze)
     if (bandWidth < avgBandWidth * VolatilityThresholdMultiplier) {
-        Print("Volatility: Low volatility detected (BB Squeeze). Bandwidth: ", bandWidth, ", Avg Bandwidth: ", avgBandWidth);
         // Now look for breakout
         if (currentClose > iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_UPPER, 0) &&
             prevClose <= iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_UPPER, 1) ) {
             BuyVotes++;
-            Print("Volatility: Buy Signal (Breakout above Upper Band after squeeze)");
+            Print("Strategy [Volatility]: Buy Signal (Breakout above Upper Band after squeeze).");
         } else if (currentClose < iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_LOWER, 0) &&
                    prevClose >= iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_LOWER, 1) ) {
             SellVotes++;
-            Print("Volatility: Sell Signal (Breakout below Lower Band after squeeze)");
+            Print("Strategy [Volatility]: Sell Signal (Breakout below Lower Band after squeeze).");
+        } else {
+            Print("Strategy [Volatility]: No signal (Low volatility squeeze detected, but no breakout yet).");
         }
     } else {
-         Print("Volatility: Normal or High volatility. Bandwidth: ", bandWidth, ", Avg Bandwidth: ", avgBandWidth);
+         Print("Strategy [Volatility]: No signal (Normal or High volatility, no squeeze).");
     }
 }
 
@@ -319,19 +334,26 @@ void AnalyzeCorrelation() {
     // A more robust way would be to calculate Pearson correlation coefficient.
 
     // If CorrelationSymbol shows strong bullish movement, consider Buy for current.
+    bool signalFound = false;
     if (correlationSymbolChange > 0.001) { // Threshold for "significant" move (e.g. 0.1%)
         // If current symbol hasn't moved as much, or is lagging, it might follow
         if (currentSymbolChange < correlationSymbolChange * 0.5) { // Current symbol lagging
              BuyVotes++;
-             Print("Correlation: Buy Signal (Positive correlation with ", CorrelationSymbol, " which is bullish)");
+             Print("Strategy [Correlation]: Buy Signal (Positive correlation with ", CorrelationSymbol, ", which is bullish).");
+             signalFound = true;
         }
     }
     // If CorrelationSymbol shows strong bearish movement, consider Sell for current.
     else if (correlationSymbolChange < -0.001) { // Threshold for "significant" move
         if (currentSymbolChange > correlationSymbolChange * 0.5) { // Current symbol lagging (more positive or less negative)
              SellVotes++;
-             Print("Correlation: Sell Signal (Positive correlation with ", CorrelationSymbol, " which is bearish)");
+             Print("Strategy [Correlation]: Sell Signal (Positive correlation with ", CorrelationSymbol, ", which is bearish).");
+             signalFound = true;
         }
+    }
+
+    if(!signalFound) {
+        Print("Strategy [Correlation]: No signal (No significant divergence in correlation found).");
     }
 }
 
@@ -361,7 +383,7 @@ void AnalyzePricePatterns() {
         // Check if it's at a potential support (e.g. recent low or MA) for confirmation
         // For simplicity, we'll just use the pattern itself for now
         BuyVotes++;
-        Print("PricePattern: Buy Signal (Bullish Engulfing)");
+        Print("Strategy [PricePattern]: Buy Signal (Bullish Engulfing).");
     }
 
     // Bearish Engulfing
@@ -372,7 +394,9 @@ void AnalyzePricePatterns() {
     // (More strict: current body engulfs previous body: open0 > close1 && close0 < open1)
     else if (close1 > open1 && close0 < open0 && open0 >= close1 && close0 <= open1) {
         SellVotes++;
-        Print("PricePattern: Sell Signal (Bearish Engulfing)");
+        Print("Strategy [PricePattern]: Sell Signal (Bearish Engulfing).");
+    } else {
+        Print("Strategy [PricePattern]: No signal (No Engulfing pattern detected).");
     }
 }
 
@@ -411,7 +435,7 @@ void AnalyzeSmartMoneyConcepts() {
                     if (iClose(Symbol(), Period(), 0) >= obLow && iClose(Symbol(), Period(), 0) <= obHigh &&
                         iLow(Symbol(), Period(), 0) <= obHigh && iLow(Symbol(), Period(), 0) >= obLow * 0.98 ) { // Price entered OB zone
                         BuyVotes++;
-                        Print("SMC: Buy Signal (Retest of Bullish Order Block after BoS)");
+                        Print("Strategy [SMC]: Buy Signal (Retest of Bullish Order Block after BoS).");
                         return; // Found a signal
                     }
                 }
@@ -430,13 +454,14 @@ void AnalyzeSmartMoneyConcepts() {
                     if (iClose(Symbol(), Period(), 0) <= obHigh && iClose(Symbol(), Period(), 0) >= obLow &&
                         iHigh(Symbol(), Period(), 0) >= obLow && iHigh(Symbol(), Period(), 0) <= obHigh * 1.02) { // Price entered OB zone
                         SellVotes++;
-                        Print("SMC: Sell Signal (Retest of Bearish Order Block after BoS)");
+                        Print("Strategy [SMC]: Sell Signal (Retest of Bearish Order Block after BoS).");
                         return; // Found a signal
                     }
                 }
             }
         }
     }
+    Print("Strategy [SMC]: No signal (No BoS + Order Block retest found).");
 }
 
 

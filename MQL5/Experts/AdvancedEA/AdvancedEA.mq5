@@ -225,16 +225,18 @@ void AnalyzeSMA20() {
 
     if (closePrice1 > smaValue && closePrice2 <= smaValue) {
         BuyVotes++;
-        printf("SMA20: Buy Signal (Crossed Above)");
+        printf("Strategy [SMA20]: Buy Signal (Price crossed above SMA).");
     } else if (closePrice1 < smaValue && closePrice2 >= smaValue) {
         SellVotes++;
-        printf("SMA20: Sell Signal (Crossed Below)");
+        printf("Strategy [SMA20]: Sell Signal (Price crossed below SMA).");
     } else if (closePrice1 > smaValue) {
         BuyVotes++;
-        printf("SMA20: Buy Signal (Above SMA)");
+        printf("Strategy [SMA20]: Buy Signal (Price is above SMA).");
     } else if (closePrice1 < smaValue) {
         SellVotes++;
-        printf("SMA20: Sell Signal (Below SMA)");
+        printf("Strategy [SMA20]: Sell Signal (Price is below SMA).");
+    } else {
+        printf("Strategy [SMA20]: No signal.");
     }
 }
 
@@ -260,26 +262,36 @@ void AnalyzeTrendRiding() {
     double close2 = rates[1].close; // Bar before previous
 
 
+    bool signalFound = false;
     if (adxValue > 25) {
         if (plusDI > minusDI && fastMA > slowMA) { // Uptrend
             if (close1 > fastMA && low1 <= fastMA) {
                  BuyVotes++;
-                 printf("TrendRiding: Buy Signal (Uptrend with pullback)");
+                 printf("Strategy [TrendRiding]: Buy Signal (Strong uptrend with pullback to Fast MA).");
+                 signalFound = true;
             } else if (close1 > slowMA && close2 <= slowMA) {
                  BuyVotes++;
-                 printf("TrendRiding: Buy Signal (Uptrend, cross slow MA)");
+                 printf("Strategy [TrendRiding]: Buy Signal (Strong uptrend, price crossed Slow MA).");
+                 signalFound = true;
             }
         } else if (minusDI > plusDI && fastMA < slowMA) { // Downtrend
             if (close1 < fastMA && high1 >= fastMA) {
                  SellVotes++;
-                 printf("TrendRiding: Sell Signal (Downtrend with pullback)");
+                 printf("Strategy [TrendRiding]: Sell Signal (Strong downtrend with pullback to Fast MA).");
+                 signalFound = true;
             } else if (close1 < slowMA && close2 >= slowMA) {
                  SellVotes++;
-                 printf("TrendRiding: Sell Signal (Downtrend, cross slow MA)");
+                 printf("Strategy [TrendRiding]: Sell Signal (Strong downtrend, price crossed Slow MA).");
+                 signalFound = true;
             }
         }
     } else {
-        printf("TrendRiding: No strong trend (ADX < 25)");
+        printf("Strategy [TrendRiding]: No signal (ADX < 25 indicates weak trend).");
+        signalFound = true; // Mark as "processed" to avoid the final "no signal" message
+    }
+
+    if(!signalFound) {
+        printf("Strategy [TrendRiding]: No signal (Trending conditions not met).");
     }
 }
 
@@ -313,7 +325,7 @@ void AnalyzeZigZagBreakout() {
     }
 
     if (lastHighZigZag == 0 || lastLowZigZag == 0) {
-        printf("ZigZag: Could not find recent ZigZag points.");
+        printf("Strategy [ZigZag]: No signal (Could not find recent ZigZag points).");
         return;
     }
 
@@ -325,10 +337,12 @@ void AnalyzeZigZagBreakout() {
 
     if (prevClose > lastHighZigZag && currentHigh > lastHighZigZag) {
         BuyVotes++;
-        printf("ZigZag: Buy Signal (Breakout above %s)", DoubleToString(lastHighZigZag, _Digits));
+        printf("Strategy [ZigZag]: Buy Signal (Breakout above last high %s).", DoubleToString(lastHighZigZag, _Digits));
     } else if (prevClose < lastLowZigZag && currentLow < lastLowZigZag) {
         SellVotes++;
-        printf("ZigZag: Sell Signal (Breakout below %s)", DoubleToString(lastLowZigZag, _Digits));
+        printf("Strategy [ZigZag]: Sell Signal (Breakout below last low %s).", DoubleToString(lastLowZigZag, _Digits));
+    } else {
+        printf("Strategy [ZigZag]: No signal (Price is within last ZigZag high/low).");
     }
 }
 
@@ -364,16 +378,18 @@ void AnalyzeDecreasedVolatilityBreakout() {
 
 
     if (bandWidth1 < avgBandWidth * VolatilityThresholdMultiplier) {
-        printf("Volatility: Low volatility detected (BB Squeeze). Bandwidth: %s, Avg Bandwidth: %s", DoubleToString(bandWidth1,_Digits), DoubleToString(avgBandWidth,_Digits));
+        // printf("Volatility: Low volatility detected (BB Squeeze). Bandwidth: %s, Avg Bandwidth: %s", DoubleToString(bandWidth1,_Digits), DoubleToString(avgBandWidth,_Digits));
         if (currentClose > upperBand0 && prevClose <= upperBand1 ) {
             BuyVotes++;
-            printf("Volatility: Buy Signal (Breakout above Upper Band after squeeze)");
+            printf("Strategy [Volatility]: Buy Signal (Breakout above Upper Band after squeeze).");
         } else if (currentClose < lowerBand0 && prevClose >= lowerBand1 ) {
             SellVotes++;
-            printf("Volatility: Sell Signal (Breakout below Lower Band after squeeze)");
+            printf("Strategy [Volatility]: Sell Signal (Breakout below Lower Band after squeeze).");
+        } else {
+            printf("Strategy [Volatility]: No signal (Low volatility squeeze detected, but no breakout yet).");
         }
     } else {
-         printf("Volatility: Normal or High volatility. Bandwidth: %s, Avg Bandwidth: %s", DoubleToString(bandWidth1,_Digits), DoubleToString(avgBandWidth,_Digits));
+         printf("Strategy [Volatility]: No signal (Normal or High volatility, no squeeze).");
     }
 }
 
@@ -407,16 +423,23 @@ void AnalyzeCorrelation() {
     if(corrSymbolCloseN == 0) return; // Avoid division by zero
     double correlationSymbolChange = (corrSymbolClose0 - corrSymbolCloseN) / corrSymbolCloseN;
 
-    if (correlationSymbolChange > 0.001) {
-        if (currentSymbolChange < correlationSymbolChange * 0.5) {
+    bool signalFound = false;
+    if (correlationSymbolChange > 0.001) { // Threshold for "significant" move
+        if (currentSymbolChange < correlationSymbolChange * 0.5) { // Current symbol lagging
              BuyVotes++;
-             printf("Correlation: Buy Signal (Positive correlation with %s which is bullish)", CorrelationSymbol);
+             printf("Strategy [Correlation]: Buy Signal (Positive correlation with %s, which is bullish).", CorrelationSymbol);
+             signalFound = true;
         }
-    } else if (correlationSymbolChange < -0.001) {
-        if (currentSymbolChange > correlationSymbolChange * 0.5) {
+    } else if (correlationSymbolChange < -0.001) { // Threshold for "significant" move
+        if (currentSymbolChange > correlationSymbolChange * 0.5) { // Current symbol lagging
              SellVotes++;
-             printf("Correlation: Sell Signal (Positive correlation with %s which is bearish)", CorrelationSymbol);
+             printf("Strategy [Correlation]: Sell Signal (Positive correlation with %s, which is bearish).", CorrelationSymbol);
+             signalFound = true;
         }
+    }
+
+    if(!signalFound) {
+        printf("Strategy [Correlation]: No signal (No significant divergence in correlation found).");
     }
 }
 
@@ -446,7 +469,7 @@ void AnalyzePricePatterns() {
     // 3. Bar 1's body engulfs Bar 2's body (open1 < close2 && close1 > open2)
     if (close2 < open2 && close1 > open1 && open1 <= close2 && close1 >= open2) {
         BuyVotes++;
-        printf("PricePattern: Buy Signal (Bullish Engulfing of bar at shift 1 over shift 2)");
+        printf("Strategy [PricePattern]: Buy Signal (Bullish Engulfing).");
     }
     // Bearish Engulfing: Bar at shift 1 engulfs bar at shift 2
     // 1. Bar at shift 2 is bullish (close2 > open2)
@@ -454,7 +477,9 @@ void AnalyzePricePatterns() {
     // 3. Bar 1's body engulfs Bar 2's body (open1 > close2 && close1 < open2)
     else if (close2 > open2 && close1 < open1 && open1 >= close2 && close1 <= open2) {
         SellVotes++;
-        printf("PricePattern: Sell Signal (Bearish Engulfing of bar at shift 1 over shift 2)");
+        printf("Strategy [PricePattern]: Sell Signal (Bearish Engulfing).");
+    } else {
+        printf("Strategy [PricePattern]: No signal (No Engulfing pattern detected).");
     }
 }
 
@@ -501,7 +526,7 @@ void AnalyzeSmartMoneyConcepts() {
                 if (rates[0].close >= obLow && rates[0].close <= obHigh &&
                     rates[0].low <= obHigh && rates[0].low >= obLow * 0.995 ) { // Price entered OB zone (allow slight penetration for low)
                     BuyVotes++;
-                    printf("SMC: Buy Signal (Retest of Bullish Order Block at %s after BoS)", TimeToString(rates[j].time));
+                    printf("Strategy [SMC]: Buy Signal (Retest of Bullish Order Block at %s after BoS).", TimeToString(rates[j].time));
                     return;
                 }
             }
@@ -527,12 +552,14 @@ void AnalyzeSmartMoneyConcepts() {
                 if (rates[0].close <= obHigh && rates[0].close >= obLow &&
                     rates[0].high >= obLow && rates[0].high <= obHigh * 1.005) { // Price entered OB zone (allow slight penetration for high)
                     SellVotes++;
-                    printf("SMC: Sell Signal (Retest of Bearish Order Block at %s after BoS)", TimeToString(rates[j].time));
+                    printf("Strategy [SMC]: Sell Signal (Retest of Bearish Order Block at %s after BoS).", TimeToString(rates[j].time));
                     return;
                 }
             }
         }
     }
+
+    printf("Strategy [SMC]: No signal (No BoS + Order Block retest found).");
 }
 
 
