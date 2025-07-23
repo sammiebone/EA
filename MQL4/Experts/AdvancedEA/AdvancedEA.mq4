@@ -9,10 +9,14 @@
 #property strict
 
 //--- Input Parameters
-input int      MaxOrders         = 2;        // Maximum number of open orders
-input double   LotSize           = 0.01;     // Fixed Lot Size
-input int      TakeProfitPips    = 50;       // Take Profit in Pips
-input int      StopLossPips      = 25;       // Stop Loss in Pips
+input int      MaxOrders         = 50;       // Maximum number of trade SETS
+input double   LotSize           = 3.0;     // Total Lot Size for a set of 3 orders
+input int      TakeProfitPips1   = 50;       // Take Profit for 1st partial order
+input int      TakeProfitPips2   = 100;      // Take Profit for 2nd partial order
+input int      TakeProfitPips3   = 150;      // Take Profit for 3rd partial order
+input int      InitialStopLossPips = 500;    // Initial Stop Loss for all partial orders
+input int      BreakevenPlusPips = 10;        // Pips to add to SL when moving to Breakeven
+input bool     TightenSL_On_Opposing_Signal = true; // Tighten SL if an opposing signal occurs
 input int      WaitPeriodMinutes = 1;        // Wait period in minutes for re-analysis
 input string   CorrelationSymbol = "EURUSD"; // Symbol for Correlation Strategy
 input int      SMA_Period        = 20;       // SMA Period
@@ -26,12 +30,35 @@ input double   BB_Deviation      = 2.0;      // Bollinger Bands Deviation
 input double   VolatilityThresholdMultiplier = 0.5; // Multiplier for ATR/BB Width to define low volatility
 input int      CorrelationPeriod = 14;       // Period for correlation calculation
 input int      ADX_Period        = 14;       // ADX Period for Trend Riding
+// RSI Inputs
+input int      RSI_Period        = 14;       // RSI Period
+input int      RSI_AppliedPrice  = PRICE_CLOSE; // RSI Applied Price
+input int      RSI_Overbought_Level = 70;      // RSI Overbought Level
+input int      RSI_Oversold_Level = 30;      // RSI Oversold Level
+// Stochastic Inputs
+input int      Stoch_K_Period    = 5;        // Stochastic K Period
+input int      Stoch_D_Period    = 3;        // Stochastic D Period
+input int      Stoch_Slowing     = 3;        // Stochastic Slowing
+input int      Stoch_MA_Method   = MODE_SMA; // Stochastic MA Method
+input int      Stoch_Overbought_Level = 80;    // Stochastic Overbought Level
+input int      Stoch_Oversold_Level = 20;    // Stochastic Oversold Level
+// MACD Inputs
+input int      MACD_Fast_EMA_Period   = 12;     // MACD Fast EMA Period
+input int      MACD_Slow_EMA_Period   = 26;     // MACD Slow EMA Period
+input int      MACD_Signal_SMA_Period = 9;      // MACD Signal Line SMA Period
+input int      MACD_AppliedPrice      = PRICE_CLOSE; // MACD Applied Price
+// Candlestick Pattern Inputs
+input double   PinBar_Wick_to_Body_Ratio = 2.0; // Min ratio of the main wick to the candle body for Pin Bar detection
+// Trend Filter Inputs
+input bool     Use_Trend_Filter        = true; // Enable/Disable the long-term trend filter
+input int      Trend_Filter_EMA_Period = 200;  // EMA Period for the trend filter
 
 //--- Global Variables
 datetime LastAnalysisTime = 0;
 int      g_EffectiveWaitPeriodMinutes; // Renamed for clarity and to avoid input modification issues
 int      BuyVotes = 0;
 int      SellVotes = 0;
+int      g_setCounter = 0;      // Counter for trade sets to generate unique magic numbers
 
 // Indicator Handles (MQL4 style, direct usage)
 
@@ -47,7 +74,7 @@ int OnInit() {
         g_EffectiveWaitPeriodMinutes = WaitPeriodMinutes;
     }
     LastAnalysisTime = TimeCurrent() - (g_EffectiveWaitPeriodMinutes * 60); // Ensure first run
-    Print("AdvancedEA Initialized. MaxOrders: ", MaxOrders, ", LotSize: ", LotSize, ", TP: ", TakeProfitPips, ", SL: ", StopLossPips, ", EffectiveWait: ", g_EffectiveWaitPeriodMinutes);
+    Print("AdvancedEA Initialized. MaxOrders (Sets): ", MaxOrders, ", Total LotSize: ", LotSize, ", InitialSL: ", InitialStopLossPips, ", EffectiveWait: ", g_EffectiveWaitPeriodMinutes);
     //---
     return(INIT_SUCCEEDED);
 }
@@ -77,6 +104,8 @@ void OnTick() {
             ProcessTradeDecisions();
         }
     }
+    // Call trade management on every tick
+    ManageOpenTradesMQL4();
 }
 
 //+------------------------------------------------------------------+
@@ -125,7 +154,49 @@ void AnalyzeStrategies() {
     // Strategy 7: Smart Money Concepts (e.g., Basic Order Block)
     AnalyzeSmartMoneyConcepts();
 
-    Print("Analysis Complete. Buy Votes: ", BuyVotes, ", Sell Votes: ", SellVotes);
+    // Strategy 8: Head and Shoulders Pattern
+    AnalyzeHeadAndShoulders();
+
+    // Strategy 9: RSI Divergence
+    AnalyzeRsiDivergence();
+
+    // Strategy 10: RSI Crossover
+    AnalyzeRsiCrossover();
+
+    // Strategy 11: Stochastic Crossover
+    AnalyzeStochasticCrossover();
+
+    // Strategy 12: MACD Crossover
+    AnalyzeMacdCrossover();
+
+    // Strategy 14: Inside/Outside Bars
+    AnalyzeInsideOutsideBars();
+
+    // Strategy 15: Pin Bars
+    AnalyzePinBars();
+
+    // Strategy 17: Fair Value Gaps
+    AnalyzeFairValueGaps();
+
+    // --- Apply Long-Term Trend Filter ---
+    if(Use_Trend_Filter) {
+        double trend_ema_value = iMA(Symbol(), Period(), Trend_Filter_EMA_Period, 0, MODE_EMA, PRICE_CLOSE, 1);
+        double close_price = iClose(Symbol(), Period(), 1);
+
+        if(close_price > trend_ema_value) { // Uptrend
+            if(SellVotes > 0) {
+                Print("Trend Filter: Ignoring ", SellVotes, " sell votes due to long-term uptrend.");
+                SellVotes = 0;
+            }
+        } else if (close_price < trend_ema_value) { // Downtrend
+            if(BuyVotes > 0) {
+                Print("Trend Filter: Ignoring ", BuyVotes, " buy votes due to long-term downtrend.");
+                BuyVotes = 0;
+            }
+        }
+    }
+
+    Print("Analysis Complete. Final Buy Votes: ", BuyVotes, ", Final Sell Votes: ", SellVotes);
 }
 
 //+------------------------------------------------------------------+
@@ -466,41 +537,146 @@ void AnalyzeSmartMoneyConcepts() {
 
 
 //+------------------------------------------------------------------+
+//| Helper Functions to Check for Open Trade Sets (MQL4)             |
+//+------------------------------------------------------------------+
+bool IsBuySetOpenMQL4() {
+    long magic_base = 12345;
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if (OrderSymbol() == Symbol() &&
+                OrderMagicNumber() == magic_base + 0 &&
+                OrderType() == OP_BUY) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool IsSellSetOpenMQL4() {
+    long magic_base = 12345;
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if (OrderSymbol() == Symbol() &&
+                OrderMagicNumber() == magic_base + 0 &&
+                OrderType() == OP_SELL) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
 //| Process Trade Decisions and Place Orders                         |
 //+------------------------------------------------------------------+
 void ProcessTradeDecisions() {
+    // --- Tighten SL on Opposing Signal Logic ---
+    if (TightenSL_On_Opposing_Signal) {
+        if (IsBuySetOpenMQL4() && SellVotes > BuyVotes) {
+            Print("Opposing SELL signal detected while BUY set is open. Tightening SL.");
+            double new_sl = iLow(Symbol(), Period(), 1);
+            long instance_magic_base = 10000;
+            for (int i = OrdersTotal() - 1; i >= 0; i--) {
+                if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                    if (OrderSymbol() == Symbol() && OrderType() == OP_BUY && OrderMagicNumber() >= instance_magic_base) {
+                        if (new_sl > OrderStopLoss()) {
+                            if(!OrderModify(OrderTicket(), OrderOpenPrice(), new_sl, OrderTakeProfit(), 0)) {
+                                Print("Error tightening SL for BUY Ticket ", OrderTicket(), ": ", GetLastError());
+                            } else {
+                                Print("Tightened SL for BUY Ticket ", OrderTicket(), " to ", new_sl);
+                            }
+                        }
+                    }
+                }
+            }
+            return; // Stop further processing
+        }
+        if (IsSellSetOpenMQL4() && BuyVotes > SellVotes) {
+            Print("Opposing BUY signal detected while SELL set is open. Tightening SL.");
+            double new_sl = iHigh(Symbol(), Period(), 1);
+            long instance_magic_base = 10000;
+            for (int i = OrdersTotal() - 1; i >= 0; i--) {
+                if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                    if (OrderSymbol() == Symbol() && OrderType() == OP_SELL && OrderMagicNumber() >= instance_magic_base) {
+                        if (new_sl < OrderStopLoss() || OrderStopLoss() == 0) {
+                             if(!OrderModify(OrderTicket(), OrderOpenPrice(), new_sl, OrderTakeProfit(), 0)) {
+                                Print("Error tightening SL for SELL Ticket ", OrderTicket(), ": ", GetLastError());
+                            } else {
+                                Print("Tightened SL for SELL Ticket ", OrderTicket(), " to ", new_sl);
+                            }
+                        }
+                    }
+                }
+            }
+            return; // Stop further processing
+        }
+    }
+
+    // --- Standard Trade Opening Logic ---
     if (CountOpenTrades() >= MaxOrders) {
-        Print("Max orders reached (", CountOpenTrades(), "). No new trade.");
+        Print("Max orders reached (", CountOpenTrades(), " sets). No new trade.");
+        return;
+    }
+
+    // Lot Size Calculation
+    double minLot = MarketInfo(Symbol(), MODE_MINLOT);
+    double lotStep = MarketInfo(Symbol(), MODE_LOTSTEP);
+    double partialLotSize = LotSize / 3.0;
+    // Normalize lot size
+    partialLotSize = MathRound(partialLotSize / lotStep) * lotStep;
+    if (partialLotSize < minLot) partialLotSize = minLot;
+    if (partialLotSize * 3.0 > LotSize + lotStep) {
+        Print("Total LotSize ", LotSize, " is too small to be split into 3 valid partial orders (min partial: ", minLot, "). Aborting.");
         return;
     }
 
     double point = Point;
-    if (Digits == 3 || Digits == 5) point *= 10; // For 3/5 digit brokers
+    if (_Digits == 3 || _Digits == 5) point *= 10;
 
-    double tp = TakeProfitPips * point;
-    double sl = StopLossPips * point;
+    int tp_pips[] = {TakeProfitPips1, TakeProfitPips2, TakeProfitPips3};
+    int sl_pips = InitialStopLossPips;
+    long instance_magic_base = 10000; // A base to distinguish this EA from others
 
     if (BuyVotes > SellVotes) {
-        // Place Buy Order
-        double price = Ask;
-        double takeProfitLevel = price + tp;
-        double stopLossLevel = price - sl;
-        int ticket = OrderSend(Symbol(), OP_BUY, LotSize, price, 3, stopLossLevel, takeProfitLevel, "AdvancedEA_Buy", 0, 0, clrGreen);
-        if (ticket > 0) {
-            Print("BUY order placed successfully. Ticket: ", ticket, " Price: ", price, " TP: ", takeProfitLevel, " SL: ", stopLossLevel);
-        } else {
-            Print("Error placing BUY order: ", GetLastError());
+        long setBaseMagic = instance_magic_base + (g_setCounter * 10);
+        g_setCounter++;
+
+        Print("Attempting to place BUY orders (Set Magic Base: ", setBaseMagic, ")... PartialLot: ", DoubleToString(partialLotSize,2));
+        for (int i = 0; i < 3; i++) {
+            double price = Ask;
+            double takeProfitLevel = price + tp_pips[i] * point;
+            double stopLossLevel = price - sl_pips * point;
+            string comment = "AdvEA_Buy_P" + (string)(i+1);
+            int magicNumber = setBaseMagic + i;
+
+            int ticket = OrderSend(Symbol(), OP_BUY, partialLotSize, price, 3, stopLossLevel, takeProfitLevel, comment, magicNumber, 0, clrGreen);
+            if (ticket > 0) {
+                Print("BUY order #", i+1, " (Magic: ", magicNumber, ") placed successfully. Ticket: ", ticket, " Lot: ", partialLotSize, " TP: ", takeProfitLevel, " SL: ", stopLossLevel);
+            } else {
+                Print("Error placing BUY order #", i+1, " (Magic: ", magicNumber, "): ", GetLastError());
+            }
+            Sleep(100); // Small pause between orders
         }
     } else if (SellVotes > BuyVotes) {
-        // Place Sell Order
-        double price = Bid;
-        double takeProfitLevel = price - tp;
-        double stopLossLevel = price + sl;
-        int ticket = OrderSend(Symbol(), OP_SELL, LotSize, price, 3, stopLossLevel, takeProfitLevel, "AdvancedEA_Sell", 0, 0, clrRed);
-        if (ticket > 0) {
-            Print("SELL order placed successfully. Ticket: ", ticket, " Price: ", price, " TP: ", takeProfitLevel, " SL: ", stopLossLevel);
-        } else {
-            Print("Error placing SELL order: ", GetLastError());
+        long setBaseMagic = instance_magic_base + (g_setCounter * 10);
+        g_setCounter++;
+
+        Print("Attempting to place SELL orders (Set Magic Base: ", setBaseMagic, ")... PartialLot: ", DoubleToString(partialLotSize,2));
+        for (int i = 0; i < 3; i++) {
+            double price = Bid;
+            double takeProfitLevel = price - tp_pips[i] * point;
+            double stopLossLevel = price + sl_pips * point;
+            string comment = "AdvEA_Sell_P" + (string)(i+1);
+            int magicNumber = setBaseMagic + i;
+
+            int ticket = OrderSend(Symbol(), OP_SELL, partialLotSize, price, 3, stopLossLevel, takeProfitLevel, comment, magicNumber, 0, clrRed);
+            if (ticket > 0) {
+                Print("SELL order #", i+1, " (Magic: ", magicNumber, ") placed successfully. Ticket: ", ticket, " Lot: ", partialLotSize, " TP: ", takeProfitLevel, " SL: ", stopLossLevel);
+            } else {
+                Print("Error placing SELL order #", i+1, " (Magic: ", magicNumber, "): ", GetLastError());
+            }
+            Sleep(100); // Small pause between orders
         }
     } else {
         Print("No trade signal: BuyVotes (", BuyVotes, ") == SellVotes (", SellVotes, ")");
@@ -508,19 +684,476 @@ void ProcessTradeDecisions() {
 }
 
 //+------------------------------------------------------------------+
-//| Count Open Trades for the current symbol and EA                  |
+//| Breakeven Logic for MQL4                                         |
 //+------------------------------------------------------------------+
-int CountOpenTrades() {
-    int count = 0;
-    for (int i = OrdersTotal() - 1; i >= 0; i--) {
-        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if (OrderSymbol() == Symbol() && (StringFind(OrderComment(), "AdvancedEA_Buy") != -1 || StringFind(OrderComment(), "AdvancedEA_Sell") != -1) ) { // Check magic number or comment
-                count++;
+int BreakevenTriggeredForTP1Tickets[]; // Stores tickets of TP1s that triggered BE
+
+bool IsTicketInArrayMQL4(int ticket, int &tickets_array[]) {
+    for (int i = 0; i < ArraySize(tickets_array); i++) {
+        if (tickets_array[i] == ticket) return true;
+    }
+    return false;
+}
+
+void ManageOpenTradesMQL4() {
+    long instance_magic_base = 10000;
+
+    for (int i = OrdersHistoryTotal() - 1; i >= 0; i--) {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) {
+            int deal_magic = OrderMagicNumber();
+            bool isTP1 = (deal_magic >= instance_magic_base) && (deal_magic % 10 == 0);
+
+            if (isTP1 && OrderSymbol() == Symbol()) {
+                if (IsTicketInArrayMQL4(OrderTicket(), BreakevenTriggeredForTP1Tickets)) continue;
+
+                if (OrderClosePrice() == OrderTakeProfit() && OrderTakeProfit() != 0) {
+                    long setBaseMagic = deal_magic; // For TP1, its magic is the set's base magic
+
+                    Print("ManageTrades: TP1 (Ticket: ", OrderTicket(), ") hit TP. Processing BE for siblings of set ", setBaseMagic);
+
+                    int arr_size = ArraySize(BreakevenTriggeredForTP1Tickets);
+                    ArrayResize(BreakevenTriggeredForTP1Tickets, arr_size + 1);
+                    BreakevenTriggeredForTP1Tickets[arr_size] = OrderTicket();
+
+                    for (int j = OrdersTotal() - 1; j >= 0; j--) {
+                        if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES)) {
+                            int current_magic = OrderMagicNumber();
+                            if (OrderSymbol() == Symbol() && (current_magic == setBaseMagic + 1 || current_magic == setBaseMagic + 2)) {
+                                double open_price = OrderOpenPrice();
+                                double current_sl = OrderStopLoss();
+                                double point = Point;
+                                if (_Digits == 3 || _Digits == 5) point *= 10;
+                                double profit_buffer = BreakevenPlusPips * point;
+                                double new_sl;
+
+                                if (OrderType() == OP_BUY) {
+                                    new_sl = open_price + profit_buffer;
+                                    if (current_sl < new_sl) {
+                                        // Before modifying, refresh rates and check if SL is too close
+                                        RefreshRates();
+                                        if(new_sl <= Bid) {
+                                            if(!OrderModify(OrderTicket(), OrderOpenPrice(), new_sl, OrderTakeProfit(), 0, clrNONE)) {
+                                                Print("Error modifying BUY order ", OrderTicket(), " to BE+: ", GetLastError());
+                                            } else {
+                                                Print("Successfully moved SL to BE+ for BUY order ", OrderTicket());
+                                            }
+                                        }
+                                    }
+                                } else { // OP_SELL
+                                    new_sl = open_price - profit_buffer;
+                                    if (current_sl > new_sl || current_sl == 0) {
+                                        RefreshRates();
+                                        if(new_sl >= Ask) {
+                                            if(!OrderModify(OrderTicket(), OrderOpenPrice(), new_sl, OrderTakeProfit(), 0, clrNONE)) {
+                                                Print("Error modifying SELL order ", OrderTicket(), " to BE+: ", GetLastError());
+                                            } else {
+                                                Print("Successfully moved SL to BE+ for SELL order ", OrderTicket());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Break after finding and processing one TP1 hit to avoid multiple BE triggers in one tick
+                    break;
+                }
             }
         }
     }
-    return count;
 }
+
+//+------------------------------------------------------------------+
+//| Count Open Trades for the current symbol and EA                  |
+//+------------------------------------------------------------------+
+int CountOpenTrades() { // This now counts sets
+    int setCount = 0;
+    long instance_magic_base = 10000;
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            // A set is identified by its first partial order, which has a magic number ending in 0
+            if (OrderSymbol() == Symbol() && OrderMagicNumber() >= instance_magic_base && OrderMagicNumber() % 10 == 0) {
+                setCount++;
+            }
+        }
+    }
+    return setCount;
+}
+//+------------------------------------------------------------------+
+//| Strategy 8: Head and Shoulders Pattern (MQL4)                    |
+//+------------------------------------------------------------------+
+// MQL4 does not have structs in the same way as MQL5 for this purpose easily,
+// so we will use parallel arrays to store ZigZag point data.
+void AnalyzeHeadAndShoulders() {
+    // 1. Get ZigZag points
+    int pointsToScan = 30;
+    double zz_prices[];
+    int zz_indices[];
+    bool zz_isHigh[];
+    int zz_count = 0;
+
+    for (int i = 0; i < pointsToScan; i++) {
+        double high_val = iCustom(Symbol(), Period(), "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep, 1, i);
+        if (high_val != 0) {
+            ArrayResize(zz_prices, zz_count + 1);
+            ArrayResize(zz_indices, zz_count + 1);
+            ArrayResize(zz_isHigh, zz_count + 1);
+            zz_prices[zz_count] = high_val;
+            zz_indices[zz_count] = i;
+            zz_isHigh[zz_count] = true;
+            zz_count++;
+        }
+        double low_val = iCustom(Symbol(), Period(), "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep, 2, i);
+        if (low_val != 0) {
+            ArrayResize(zz_prices, zz_count + 1);
+            ArrayResize(zz_indices, zz_count + 1);
+            ArrayResize(zz_isHigh, zz_count + 1);
+            zz_prices[zz_count] = low_val;
+            zz_indices[zz_count] = i;
+            zz_isHigh[zz_count] = false;
+            zz_count++;
+        }
+    }
+
+    if (zz_count < 5) {
+        Print("Strategy [H&S]: Not enough ZigZag points found (", zz_count, ").");
+        return;
+    }
+
+    // Sort the points by index because iCustom doesn't guarantee order
+    for (int i = 0; i < zz_count - 1; i++) {
+        for (int j = i + 1; j < zz_count; j++) {
+            if (zz_indices[i] > zz_indices[j]) {
+                // Swap all parallel array elements
+                double temp_price = zz_prices[i]; zz_prices[i] = zz_prices[j]; zz_prices[j] = temp_price;
+                int temp_index = zz_indices[i]; zz_indices[i] = zz_indices[j]; zz_indices[j] = temp_index;
+                bool temp_isHigh = zz_isHigh[i]; zz_isHigh[i] = zz_isHigh[j]; zz_isHigh[j] = temp_isHigh;
+            }
+        }
+    }
+
+    // 2. Loop through points to find patterns
+    for (int i = 0; i <= zz_count - 5; i++) {
+        bool p1_isHigh = zz_isHigh[i]; double p1_price = zz_prices[i]; int p1_index = zz_indices[i];
+        bool p2_isHigh = zz_isHigh[i+1]; double p2_price = zz_prices[i+1]; int p2_index = zz_indices[i+1];
+        bool p3_isHigh = zz_isHigh[i+2]; double p3_price = zz_prices[i+2]; int p3_index = zz_indices[i+2];
+        bool p4_isHigh = zz_isHigh[i+3]; double p4_price = zz_prices[i+3]; int p4_index = zz_indices[i+3];
+        bool p5_isHigh = zz_isHigh[i+4]; double p5_price = zz_prices[i+4]; int p5_index = zz_indices[i+4];
+
+        // --- Head and Shoulders (Bearish) ---
+        if(p1_isHigh && !p2_isHigh && p3_isHigh && !p4_isHigh && p5_isHigh) {
+            if (p3_price > p1_price && p3_price > p5_price) {
+                double patternHeight = p3_price - MathMin(p2_price, p4_price);
+                if (MathAbs(p1_price - p5_price) < (patternHeight * 0.15)) {
+                    double slope = (p4_price - p2_price) / (p4_index - p2_index);
+                    double neckline_val = p4_price + slope * (0 - p4_index);
+                    if (iClose(Symbol(), Period(), 0) < neckline_val) {
+                        SellVotes++;
+                        Print("Strategy [H&S]: Sell Signal (Head and Shoulders pattern confirmed by neckline break).");
+                        return;
+                    }
+                }
+            }
+        }
+
+        // --- Inverse Head and Shoulders (Bullish) ---
+        if(!p1_isHigh && p2_isHigh && !p3_isHigh && p4_isHigh && !p5_isHigh) {
+            if (p3_price < p1_price && p3_price < p5_price) {
+                double patternHeight = MathMax(p2_price, p4_price) - p3_price;
+                if (MathAbs(p1_price - p5_price) < (patternHeight * 0.15)) {
+                    double slope = (p4_price - p2_price) / (p4_index - p2_index);
+                    double neckline_val = p4_price + slope * (0 - p4_index);
+                    if (iClose(Symbol(), Period(), 0) > neckline_val) {
+                        BuyVotes++;
+                        Print("Strategy [H&S]: Buy Signal (Inverse Head and Shoulders pattern confirmed by neckline break).");
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    Print("Strategy [H&S]: No signal (No H&S pattern detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 9: RSI Divergence (MQL4)                                |
+//+------------------------------------------------------------------+
+void AnalyzeRsiDivergence() {
+    // 1. Get ZigZag points (reusing H&S logic structure)
+    int pointsToScan = 20;
+    double zz_prices[];
+    int zz_indices[];
+    bool zz_isHigh[];
+    int zz_count = 0;
+
+    for (int i = 0; i < pointsToScan; i++) {
+        double high_val = iCustom(Symbol(), Period(), "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep, 1, i);
+        if (high_val != 0) {
+            ArrayResize(zz_prices, zz_count + 1); ArrayResize(zz_indices, zz_count + 1); ArrayResize(zz_isHigh, zz_count + 1);
+            zz_prices[zz_count] = high_val; zz_indices[zz_count] = i; zz_isHigh[zz_count] = true; zz_count++;
+        }
+        double low_val = iCustom(Symbol(), Period(), "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep, 2, i);
+        if (low_val != 0) {
+            ArrayResize(zz_prices, zz_count + 1); ArrayResize(zz_indices, zz_count + 1); ArrayResize(zz_isHigh, zz_count + 1);
+            zz_prices[zz_count] = low_val; zz_indices[zz_count] = i; zz_isHigh[zz_count] = false; zz_count++;
+        }
+    }
+    if (zz_count < 4) { Print("Strategy [RSI Divergence]: Not enough ZigZag points."); return; }
+    // Sort points
+    for (int i = 0; i < zz_count - 1; i++) for (int j = i + 1; j < zz_count; j++) if (zz_indices[i] > zz_indices[j]) {
+        double temp_price = zz_prices[i]; zz_prices[i] = zz_prices[j]; zz_prices[j] = temp_price;
+        int temp_index = zz_indices[i]; zz_indices[i] = zz_indices[j]; zz_indices[j] = temp_index;
+        bool temp_isHigh = zz_isHigh[i]; zz_isHigh[i] = zz_isHigh[j]; zz_isHigh[j] = temp_isHigh;
+    }
+
+    // Find last two highs and last two lows
+    double H1_price=0, H2_price=0, L1_price=0, L2_price=0;
+    int H1_index=0, H2_index=0, L1_index=0, L2_index=0;
+    int highsFound = 0, lowsFound = 0;
+    for(int i = zz_count - 1; i >= 0; i--) {
+        if(zz_isHigh[i]) {
+            if(highsFound == 0) { H2_price = zz_prices[i]; H2_index = zz_indices[i]; }
+            if(highsFound == 1) { H1_price = zz_prices[i]; H1_index = zz_indices[i]; }
+            highsFound++;
+        } else {
+            if(lowsFound == 0) { L2_price = zz_prices[i]; L2_index = zz_indices[i]; }
+            if(lowsFound == 1) { L1_price = zz_prices[i]; L1_index = zz_indices[i]; }
+            lowsFound++;
+        }
+        if(highsFound >= 2 && lowsFound >= 2) break;
+    }
+
+    // Check for Bearish Divergence
+    if(highsFound >= 2) {
+        if(H2_price > H1_price) {
+            double rsi_h1 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, H1_index);
+            double rsi_h2 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, H2_index);
+            if(rsi_h2 < rsi_h1 && rsi_h1 > 50 && rsi_h2 > 50) {
+                SellVotes++;
+                Print("Strategy [RSI Divergence]: Sell Signal (Bearish divergence confirmed).");
+                return;
+            }
+        }
+    }
+
+    // Check for Bullish Divergence
+    if(lowsFound >= 2) {
+        if(L2_price < L1_price) {
+            double rsi_l1 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, L1_index);
+            double rsi_l2 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, L2_index);
+            if(rsi_l2 > rsi_l1 && rsi_l1 < 50 && rsi_l2 < 50) {
+                BuyVotes++;
+                Print("Strategy [RSI Divergence]: Buy Signal (Bullish divergence confirmed).");
+                return;
+            }
+        }
+    }
+
+    Print("Strategy [RSI Divergence]: No signal (No divergence detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 10: RSI Overbought/Oversold Crossover (MQL4)            |
+//+------------------------------------------------------------------+
+void AnalyzeRsiCrossover() {
+    double rsi_shift1 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, 1);
+    double rsi_shift2 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, 2);
+
+    // Check for Bearish Crossover
+    if (rsi_shift2 >= RSI_Overbought_Level && rsi_shift1 < RSI_Overbought_Level) {
+        SellVotes++;
+        Print("Strategy [RSI Crossover]: Sell Signal (RSI crossed down from Overbought zone).");
+        return;
+    }
+
+    // Check for Bullish Crossover
+    if (rsi_shift2 <= RSI_Oversold_Level && rsi_shift1 > RSI_Oversold_Level) {
+        BuyVotes++;
+        Print("Strategy [RSI Crossover]: Buy Signal (RSI crossed up from Oversold zone).");
+        return;
+    }
+
+    Print("Strategy [RSI Crossover]: No signal (No OB/OS crossover detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 11: Stochastic Oscillator Crossover (MQL4)              |
+//+------------------------------------------------------------------+
+void AnalyzeStochasticCrossover() {
+    double k_shift1 = iStochastic(Symbol(), Period(), Stoch_K_Period, Stoch_D_Period, Stoch_Slowing, Stoch_MA_Method, 0, MODE_MAIN, 1);
+    double d_shift1 = iStochastic(Symbol(), Period(), Stoch_K_Period, Stoch_D_Period, Stoch_Slowing, Stoch_MA_Method, 0, MODE_SIGNAL, 1);
+    double k_shift2 = iStochastic(Symbol(), Period(), Stoch_K_Period, Stoch_D_Period, Stoch_Slowing, Stoch_MA_Method, 0, MODE_MAIN, 2);
+    double d_shift2 = iStochastic(Symbol(), Period(), Stoch_K_Period, Stoch_D_Period, Stoch_Slowing, Stoch_MA_Method, 0, MODE_SIGNAL, 2);
+
+    // Check for Bearish Crossover
+    if (k_shift1 > Stoch_Overbought_Level && d_shift1 > Stoch_Overbought_Level) {
+        if (k_shift2 > d_shift2 && k_shift1 < d_shift1) {
+            SellVotes++;
+            Print("Strategy [Stochastic]: Sell Signal (K crossed below D in Overbought zone).");
+            return;
+        }
+    }
+
+    // Check for Bullish Crossover
+    if (k_shift1 < Stoch_Oversold_Level && d_shift1 < Stoch_Oversold_Level) {
+        if (k_shift2 < d_shift2 && k_shift1 > d_shift1) {
+            BuyVotes++;
+            Print("Strategy [Stochastic]: Buy Signal (K crossed above D in Oversold zone).");
+            return;
+        }
+    }
+
+    Print("Strategy [Stochastic Crossover]: No signal (No OB/OS crossover detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 12: MACD Crossover (MQL4)                               |
+//+------------------------------------------------------------------+
+void AnalyzeMacdCrossover() {
+    double main_shift1 = iMACD(Symbol(), Period(), MACD_Fast_EMA_Period, MACD_Slow_EMA_Period, MACD_Signal_SMA_Period, MACD_AppliedPrice, MODE_MAIN, 1);
+    double signal_shift1 = iMACD(Symbol(), Period(), MACD_Fast_EMA_Period, MACD_Slow_EMA_Period, MACD_Signal_SMA_Period, MACD_AppliedPrice, MODE_SIGNAL, 1);
+    double main_shift2 = iMACD(Symbol(), Period(), MACD_Fast_EMA_Period, MACD_Slow_EMA_Period, MACD_Signal_SMA_Period, MACD_AppliedPrice, MODE_MAIN, 2);
+    double signal_shift2 = iMACD(Symbol(), Period(), MACD_Fast_EMA_Period, MACD_Slow_EMA_Period, MACD_Signal_SMA_Period, MACD_AppliedPrice, MODE_SIGNAL, 2);
+
+    // Check for Bullish Crossover
+    if (main_shift2 <= signal_shift2 && main_shift1 > signal_shift1) {
+        BuyVotes++;
+        Print("Strategy [MACD Crossover]: Buy Signal (Main line crossed above Signal line).");
+        return;
+    }
+
+    // Check for Bearish Crossover
+    if (main_shift2 >= signal_shift2 && main_shift1 < signal_shift1) {
+        SellVotes++;
+        Print("Strategy [MACD Crossover]: Sell Signal (Main line crossed below Signal line).");
+        return;
+    }
+
+    Print("Strategy [MACD Crossover]: No signal (No crossover detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 14: Inside/Outside Bars (MQL4)                          |
+//+------------------------------------------------------------------+
+void AnalyzeInsideOutsideBars() {
+    // Check for Inside Bar Breakout
+    bool isInsideBar = iHigh(Symbol(), Period(), 1) < iHigh(Symbol(), Period(), 2) && iLow(Symbol(), Period(), 1) > iLow(Symbol(), Period(), 2);
+    if (isInsideBar) {
+        if (iClose(Symbol(), Period(), 0) > iHigh(Symbol(), Period(), 1)) {
+            BuyVotes++;
+            Print("Strategy [I/O Bars]: Buy Signal (Breakout of Inside Bar high).");
+            return;
+        }
+        if (iClose(Symbol(), Period(), 0) < iLow(Symbol(), Period(), 1)) {
+            SellVotes++;
+            Print("Strategy [I/O Bars]: Sell Signal (Breakout of Inside Bar low).");
+            return;
+        }
+    }
+
+    // Check for Outside Bar
+    bool isOutsideBar = iHigh(Symbol(), Period(), 1) > iHigh(Symbol(), Period(), 2) && iLow(Symbol(), Period(), 1) < iLow(Symbol(), Period(), 2);
+    if(isOutsideBar) {
+        if(iClose(Symbol(), Period(), 1) > iOpen(Symbol(), Period(), 1)) {
+            BuyVotes++;
+            Print("Strategy [I/O Bars]: Buy Signal (Bullish Outside Bar detected).");
+            return;
+        }
+        if(iClose(Symbol(), Period(), 1) < iOpen(Symbol(), Period(), 1)) {
+            SellVotes++;
+            Print("Strategy [I/O Bars]: Sell Signal (Bearish Outside Bar detected).");
+            return;
+        }
+    }
+
+    Print("Strategy [I/O Bars]: No signal (No Inside Bar breakout or Outside Bar detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 15: Pin Bars (Hammer / Shooting Star) (MQL4)            |
+//+------------------------------------------------------------------+
+void AnalyzePinBars() {
+    double open = iOpen(Symbol(), Period(), 1);
+    double high = iHigh(Symbol(), Period(), 1);
+    double low = iLow(Symbol(), Period(), 1);
+    double close = iClose(Symbol(), Period(), 1);
+
+    double bodySize = MathAbs(open - close);
+    double upperWick = high - MathMax(open, close);
+    double lowerWick = MathMin(open, close) - low;
+
+    if (bodySize < Point) bodySize = Point;
+
+    // Bullish Pin Bar (Hammer)
+    if (lowerWick > (bodySize * PinBar_Wick_to_Body_Ratio) && upperWick < bodySize) {
+        BuyVotes++;
+        Print("Strategy [Pin Bars]: Buy Signal (Bullish Pin Bar / Hammer detected).");
+        return;
+    }
+
+    // Bearish Pin Bar (Shooting Star)
+    if (upperWick > (bodySize * PinBar_Wick_to_Body_Ratio) && lowerWick < bodySize) {
+        SellVotes++;
+        Print("Strategy [Pin Bars]: Sell Signal (Bearish Pin Bar / Shooting Star detected).");
+        return;
+    }
+
+    Print("Strategy [Pin Bars]: No signal (No valid Pin Bar detected).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 17: Fair Value Gaps (Imbalances) (MQL4)                 |
+//+------------------------------------------------------------------+
+void AnalyzeFairValueGaps() {
+    int lookback = 50;
+
+    // Find the most recent FVG that has not been filled
+    for (int i = 1; i < lookback - 2; i++) {
+        // Bullish FVG (gap between low of i and high of i+2) -> Potential Sell Signal
+        double bullish_fvg_top = iHigh(Symbol(), Period(), i+2);
+        double bullish_fvg_bottom = iLow(Symbol(), Period(), i);
+        if (bullish_fvg_top > bullish_fvg_bottom) {
+            bool filled = false;
+            for(int j = i-1; j >= 0; j--) {
+                if(iLow(Symbol(), Period(), j) < bullish_fvg_top) {
+                    filled = true;
+                    break;
+                }
+            }
+            if(!filled) {
+                if(iClose(Symbol(), Period(), 0) <= bullish_fvg_top && iClose(Symbol(), Period(), 0) >= bullish_fvg_bottom) {
+                    SellVotes++;
+                    Print("Strategy [FVG]: Sell Signal (Price entered a Bullish FVG zone).");
+                    return;
+                }
+            }
+        }
+
+        // Bearish FVG (gap between high of i and low of i+2) -> Potential Buy Signal
+        double bearish_fvg_top = iHigh(Symbol(), Period(), i);
+        double bearish_fvg_bottom = iLow(Symbol(), Period(), i+2);
+        if (bearish_fvg_top > bearish_fvg_bottom) {
+            bool filled = false;
+            for(int j = i-1; j >= 0; j--) {
+                if(iHigh(Symbol(), Period(), j) > bearish_fvg_bottom) {
+                    filled = true;
+                    break;
+                }
+            }
+            if(!filled) {
+                if(iClose(Symbol(), Period(), 0) >= bearish_fvg_bottom && iClose(Symbol(), Period(), 0) <= bearish_fvg_top) {
+                    BuyVotes++;
+                    Print("Strategy [FVG]: Buy Signal (Price entered a Bearish FVG zone).");
+                    return;
+                }
+            }
+        }
+    }
+
+    Print("Strategy [FVG]: No signal (No recent, unfilled FVG is being tested).");
+}
+
 //+------------------------------------------------------------------+
 
 // --- End of File ---
