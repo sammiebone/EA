@@ -281,6 +281,11 @@ input group "Trade Management"
 input bool     Use_Time_Based_Exit = true;     // Enable/Disable closing trades after N bars
 input int      Max_Bars_Open       = 100;    // Max number of bars a trade can stay open
 
+input group "Market Regime Filter"
+input bool     Use_Market_Regime_Filter = true;  // Enable/Disable ADX Market Regime Filter
+input int      Regime_ADX_Period        = 14;   // ADX Period for Regime Filter
+input double   Regime_ADX_Trending_Threshold = 25.0; // ADX value above which market is considered trending
+
 input group "--- Strategies (Initial State) ---"
 input bool Inp_Enable_SMA20         = true;
 input bool Inp_Enable_TrendRiding   = true;
@@ -340,6 +345,7 @@ int      hMACD;
 int      hATR;
 int      hKC_EMA;
 int      hTrendFilterEMA;
+int      hRegimeADX;
 // For correlation symbol data
 int      hCorrSymbolSMA; // Example if needed, direct price usually better
 
@@ -422,6 +428,9 @@ int OnInit() {
     hTrendFilterEMA = iMA(_Symbol, _Period, Trend_Filter_EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
     if(hTrendFilterEMA == INVALID_HANDLE) { printf("Error creating Trend Filter EMA indicator"); return(INIT_FAILED); }
 
+    hRegimeADX = iADX(_Symbol, _Period, Regime_ADX_Period);
+    if(hRegimeADX == INVALID_HANDLE) { printf("Error creating Regime Filter ADX indicator"); return(INIT_FAILED); }
+
     trade.SetExpertMagicNumber(MagicNumberBase);
     trade.SetDeviationInPoints(3); // Slippage
 
@@ -458,6 +467,7 @@ void OnDeinit(const int reason) {
     IndicatorRelease(hATR);
     IndicatorRelease(hKC_EMA);
     IndicatorRelease(hTrendFilterEMA);
+    IndicatorRelease(hRegimeADX);
     printf("AdvancedEA Deinitialized. Reason: %d", reason);
     //---
 }
@@ -512,23 +522,47 @@ double GetIndicatorValue(int handle, int buffer, int shift) {
 //| Analyze strategies and vote                                      |
 //+------------------------------------------------------------------+
 void AnalyzeStrategies() {
-    // Strategy 1: SMA 20
-    if(g_strategyEnabled[STRAT_SMA20]) AnalyzeSMA20();
-    if(g_strategyEnabled[STRAT_TREND_RIDING]) AnalyzeTrendRiding();
-    if(g_strategyEnabled[STRAT_ZIGZAG]) AnalyzeZigZagBreakout();
-    if(g_strategyEnabled[STRAT_VOLATILITY]) AnalyzeDecreasedVolatilityBreakout();
-    if(g_strategyEnabled[STRAT_CORRELATION]) AnalyzeCorrelation();
-    if(g_strategyEnabled[STRAT_PRICE_PATTERNS]) AnalyzePricePatterns();
-    if(g_strategyEnabled[STRAT_SMC]) AnalyzeSmartMoneyConcepts();
-    if(g_strategyEnabled[STRAT_HNS]) AnalyzeHeadAndShoulders();
-    if(g_strategyEnabled[STRAT_RSI_DIV]) AnalyzeRsiDivergence();
-    if(g_strategyEnabled[STRAT_RSI_CROSS]) AnalyzeRsiCrossover();
-    if(g_strategyEnabled[STRAT_STOCH_CROSS]) AnalyzeStochasticCrossover();
-    if(g_strategyEnabled[STRAT_MACD_CROSS]) AnalyzeMacdCrossover();
-    if(g_strategyEnabled[STRAT_IO_BARS]) AnalyzeInsideOutsideBars();
-    if(g_strategyEnabled[STRAT_PIN_BARS]) AnalyzePinBars();
-    if(g_strategyEnabled[STRAT_3BAR_REVERSAL]) AnalyzeThreeBarReversal();
-    if(g_strategyEnabled[STRAT_FVG]) AnalyzeFairValueGaps();
+    bool analysis_enabled[TOTAL_STRATEGIES];
+    ArrayCopy(analysis_enabled, g_strategyEnabled, 0, 0, WHOLE_ARRAY);
+
+    // --- Apply Market Regime Filter ---
+    if(Use_Market_Regime_Filter) {
+        double adx_value = GetIndicatorValue(hRegimeADX, MAIN_LINE, 1);
+        if(adx_value != EMPTY_VALUE) {
+            if(adx_value > Regime_ADX_Trending_Threshold) { // --- TRENDING MARKET ---
+                printf("Market Regime: TRENDING (ADX=%.2f). Disabling range/reversal strategies.", adx_value);
+                analysis_enabled[STRAT_RSI_DIV] = false;
+                analysis_enabled[STRAT_RSI_CROSS] = false;
+                analysis_enabled[STRAT_STOCH_CROSS] = false;
+                analysis_enabled[STRAT_PIN_BARS] = false;
+                analysis_enabled[STRAT_3BAR_REVERSAL] = false;
+                analysis_enabled[STRAT_FVG] = false;
+            } else { // --- RANGING MARKET ---
+                printf("Market Regime: RANGING (ADX=%.2f). Disabling trend-following strategies.", adx_value);
+                analysis_enabled[STRAT_TREND_RIDING] = false;
+                analysis_enabled[STRAT_MACD_CROSS] = false;
+                // We keep SMA20 as it can give signals in both
+            }
+        }
+    }
+
+    // --- Execute Enabled Strategies ---
+    if(analysis_enabled[STRAT_SMA20]) AnalyzeSMA20();
+    if(analysis_enabled[STRAT_TREND_RIDING]) AnalyzeTrendRiding();
+    if(analysis_enabled[STRAT_ZIGZAG]) AnalyzeZigZagBreakout();
+    if(analysis_enabled[STRAT_VOLATILITY]) AnalyzeDecreasedVolatilityBreakout();
+    if(analysis_enabled[STRAT_CORRELATION]) AnalyzeCorrelation();
+    if(analysis_enabled[STRAT_PRICE_PATTERNS]) AnalyzePricePatterns();
+    if(analysis_enabled[STRAT_SMC]) AnalyzeSmartMoneyConcepts();
+    if(analysis_enabled[STRAT_HNS]) AnalyzeHeadAndShoulders();
+    if(analysis_enabled[STRAT_RSI_DIV]) AnalyzeRsiDivergence();
+    if(analysis_enabled[STRAT_RSI_CROSS]) AnalyzeRsiCrossover();
+    if(analysis_enabled[STRAT_STOCH_CROSS]) AnalyzeStochasticCrossover();
+    if(analysis_enabled[STRAT_MACD_CROSS]) AnalyzeMacdCrossover();
+    if(analysis_enabled[STRAT_IO_BARS]) AnalyzeInsideOutsideBars();
+    if(analysis_enabled[STRAT_PIN_BARS]) AnalyzePinBars();
+    if(analysis_enabled[STRAT_3BAR_REVERSAL]) AnalyzeThreeBarReversal();
+    if(analysis_enabled[STRAT_FVG]) AnalyzeFairValueGaps();
 
     // --- Apply Long-Term Trend Filter ---
     if(Use_Trend_Filter) {

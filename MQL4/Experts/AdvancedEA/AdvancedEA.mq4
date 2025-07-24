@@ -52,6 +52,28 @@ input double   PinBar_Wick_to_Body_Ratio = 2.0; // Min ratio of the main wick to
 // Trend Filter Inputs
 input bool     Use_Trend_Filter        = true; // Enable/Disable the long-term trend filter
 input int      Trend_Filter_EMA_Period = 200;  // EMA Period for the trend filter
+// Market Regime Filter Inputs
+input bool     Use_Market_Regime_Filter = true;  // Enable/Disable ADX Market Regime Filter
+input int      Regime_ADX_Period        = 14;   // ADX Period for Regime Filter
+input double   Regime_ADX_Trending_Threshold = 25.0; // ADX value above which market is considered trending
+// Strategy Weights
+input int Weight_SMA20         = 1;
+input int Weight_TrendRiding   = 1;
+input int Weight_ZigZag        = 2;
+input int Weight_Volatility    = 1;
+input int Weight_Correlation   = 1;
+input int Weight_PricePatterns = 2;
+input int Weight_SMC           = 3;
+input int Weight_HnS           = 3;
+input int Weight_RsiDiv        = 3;
+input int Weight_RsiCross      = 1;
+input int Weight_StochCross    = 1;
+input int Weight_MacdCross     = 1;
+input int Weight_IOBars        = 2;
+input int Weight_PinBars       = 2;
+input int Weight_3BarReversal  = 2;
+input int Weight_FVG           = 3;
+
 
 //--- Global Variables
 datetime LastAnalysisTime = 0;
@@ -133,11 +155,24 @@ bool IsNewBar() {
 //| Analyze strategies and vote                                      |
 //+------------------------------------------------------------------+
 void AnalyzeStrategies() {
-    // Strategy 1: SMA 20
-    AnalyzeSMA20();
+    bool trend_strategies_allowed = true;
+    bool range_strategies_allowed = true;
 
-    // Strategy 2: Trend Riding (using ADX and MAs)
-    AnalyzeTrendRiding();
+    if(Use_Market_Regime_Filter) {
+        double adx_value = iADX(Symbol(), Period(), Regime_ADX_Period, PRICE_CLOSE, MODE_MAIN, 1);
+        if(adx_value > Regime_ADX_Trending_Threshold) {
+            Print("Market Regime: TRENDING (ADX=", adx_value, "). Disabling range/reversal strategies.");
+            range_strategies_allowed = false;
+        } else {
+            Print("Market Regime: RANGING (ADX=", adx_value, "). Disabling trend-following strategies.");
+            trend_strategies_allowed = false;
+        }
+    }
+
+    // --- Execute Enabled Strategies ---
+    AnalyzeSMA20(); // Always run SMA20 as it can be both
+
+    if(trend_strategies_allowed) AnalyzeTrendRiding();
 
     // Strategy 3: Breakout Trading using ZigZag Indicator
     AnalyzeZigZagBreakout();
@@ -155,28 +190,34 @@ void AnalyzeStrategies() {
     AnalyzeSmartMoneyConcepts();
 
     // Strategy 8: Head and Shoulders Pattern
-    AnalyzeHeadAndShoulders();
+    if(range_strategies_allowed) AnalyzeHeadAndShoulders();
 
     // Strategy 9: RSI Divergence
-    AnalyzeRsiDivergence();
+    if(range_strategies_allowed) AnalyzeRsiDivergence();
 
     // Strategy 10: RSI Crossover
-    AnalyzeRsiCrossover();
+    if(range_strategies_allowed) AnalyzeRsiCrossover();
 
     // Strategy 11: Stochastic Crossover
-    AnalyzeStochasticCrossover();
+    if(range_strategies_allowed) AnalyzeStochasticCrossover();
 
     // Strategy 12: MACD Crossover
-    AnalyzeMacdCrossover();
+    if(trend_strategies_allowed) AnalyzeMacdCrossover();
 
     // Strategy 14: Inside/Outside Bars
-    AnalyzeInsideOutsideBars();
+    AnalyzeInsideOutsideBars(); // Can be useful in both
 
     // Strategy 15: Pin Bars
-    AnalyzePinBars();
+    if(range_strategies_allowed) AnalyzePinBars();
+
+    // Strategy 16: Three-Bar Reversal
+    if(range_strategies_allowed) AnalyzeThreeBarReversal();
 
     // Strategy 17: Fair Value Gaps
-    AnalyzeFairValueGaps();
+    if(range_strategies_allowed) AnalyzeFairValueGaps();
+
+    // Strategy 16: Three-Bar Reversal
+    if(range_strategies_allowed) AnalyzeThreeBarReversal();
 
     // --- Apply Long-Term Trend Filter ---
     if(Use_Trend_Filter) {
@@ -208,17 +249,17 @@ void AnalyzeSMA20() {
     double closePrice2 = iClose(Symbol(), Period(), 2); // Bar before previous
 
     if (closePrice1 > smaValue && closePrice2 <= smaValue) { // Price crossed above SMA
-        BuyVotes++;
-        Print("Strategy [SMA20]: Buy Signal (Price crossed above SMA).");
+        BuyVotes += Weight_SMA20;
+        Print("Strategy [SMA20]: Buy Signal (Price crossed above SMA). Adding ", Weight_SMA20, " votes.");
     } else if (closePrice1 < smaValue && closePrice2 >= smaValue) { // Price crossed below SMA
-        SellVotes++;
-        Print("Strategy [SMA20]: Sell Signal (Price crossed below SMA).");
+        SellVotes += Weight_SMA20;
+        Print("Strategy [SMA20]: Sell Signal (Price crossed below SMA). Adding ", Weight_SMA20, " votes.");
     } else if (closePrice1 > smaValue) {
-        BuyVotes++; // Price is above SMA - bullish bias
-        Print("Strategy [SMA20]: Buy Signal (Price is above SMA).");
+        BuyVotes += Weight_SMA20; // Price is above SMA - bullish bias
+        Print("Strategy [SMA20]: Buy Signal (Price is above SMA). Adding ", Weight_SMA20, " votes.");
     } else if (closePrice1 < smaValue) {
-        SellVotes++; // Price is below SMA - bearish bias
-        Print("Strategy [SMA20]: Sell Signal (Price is below SMA).");
+        SellVotes += Weight_SMA20; // Price is below SMA - bearish bias
+        Print("Strategy [SMA20]: Sell Signal (Price is below SMA). Adding ", Weight_SMA20, " votes.");
     } else {
         Print("Strategy [SMA20]: No signal.");
     }
@@ -241,22 +282,22 @@ void AnalyzeTrendRiding() {
         if (plusDI > minusDI && fastMA > slowMA) { // Uptrend
             // Optional: Check for pullback to fast MA or entry condition
             if (iClose(Symbol(), Period(), 1) > fastMA && iLow(Symbol(), Period(), 1) <= fastMA) { // Pullback to Fast MA in uptrend
-                 BuyVotes++;
-                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend with pullback to Fast MA).");
+                 BuyVotes += Weight_TrendRiding;
+                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend with pullback to Fast MA). Adding ", Weight_TrendRiding, " votes.");
                  signalFound = true;
             } else if (iClose(Symbol(), Period(), 1) > slowMA && iClose(Symbol(), Period(), 2) <= slowMA) { // Cross above slow MA
-                 BuyVotes++;
-                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend, price crossed Slow MA).");
+                 BuyVotes += Weight_TrendRiding;
+                 Print("Strategy [TrendRiding]: Buy Signal (Strong uptrend, price crossed Slow MA). Adding ", Weight_TrendRiding, " votes.");
                  signalFound = true;
             }
         } else if (minusDI > plusDI && fastMA < slowMA) { // Downtrend
             if (iClose(Symbol(), Period(), 1) < fastMA && iHigh(Symbol(), Period(), 1) >= fastMA) { // Pullback to Fast MA in downtrend
-                 SellVotes++;
-                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend with pullback to Fast MA).");
+                 SellVotes += Weight_TrendRiding;
+                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend with pullback to Fast MA). Adding ", Weight_TrendRiding, " votes.");
                  signalFound = true;
             } else if (iClose(Symbol(), Period(), 1) < slowMA && iClose(Symbol(), Period(), 2) >= slowMA) { // Cross below slow MA
-                 SellVotes++;
-                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend, price crossed Slow MA).");
+                 SellVotes += Weight_TrendRiding;
+                 Print("Strategy [TrendRiding]: Sell Signal (Strong downtrend, price crossed Slow MA). Adding ", Weight_TrendRiding, " votes.");
                  signalFound = true;
             }
         }
@@ -308,13 +349,13 @@ void AnalyzeZigZagBreakout() {
 
     // Breakout above last significant ZigZag high
     if (prevClose > lastHighZigZag && currentHigh > lastHighZigZag) { // Ensure current bar also supports breakout
-        BuyVotes++;
-        Print("Strategy [ZigZag]: Buy Signal (Breakout above last high ", DoubleToString(lastHighZigZag, Digits), ").");
+        BuyVotes += Weight_ZigZag;
+        Print("Strategy [ZigZag]: Buy Signal (Breakout above last high ", DoubleToString(lastHighZigZag, Digits), "). Adding ", Weight_ZigZag, " votes.");
     }
     // Breakout below last significant ZigZag low
     else if (prevClose < lastLowZigZag && currentLow < lastLowZigZag) { // Ensure current bar also supports breakout
-        SellVotes++;
-        Print("Strategy [ZigZag]: Sell Signal (Breakout below last low ", DoubleToString(lastLowZigZag, Digits), ").");
+        SellVotes += Weight_ZigZag;
+        Print("Strategy [ZigZag]: Sell Signal (Breakout below last low ", DoubleToString(lastLowZigZag, Digits), "). Adding ", Weight_ZigZag, " votes.");
     } else {
         Print("Strategy [ZigZag]: No signal (Price is within last ZigZag high/low).");
     }
@@ -355,12 +396,12 @@ void AnalyzeDecreasedVolatilityBreakout() {
         // Now look for breakout
         if (currentClose > iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_UPPER, 0) &&
             prevClose <= iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_UPPER, 1) ) {
-            BuyVotes++;
-            Print("Strategy [Volatility]: Buy Signal (Breakout above Upper Band after squeeze).");
+            BuyVotes += Weight_Volatility;
+            Print("Strategy [Volatility]: Buy Signal (Breakout above Upper Band after squeeze). Adding ", Weight_Volatility, " votes.");
         } else if (currentClose < iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_LOWER, 0) &&
                    prevClose >= iBands(Symbol(), Period(), BB_Period, BB_Deviation, 0, PRICE_CLOSE, MODE_LOWER, 1) ) {
-            SellVotes++;
-            Print("Strategy [Volatility]: Sell Signal (Breakout below Lower Band after squeeze).");
+            SellVotes += Weight_Volatility;
+            Print("Strategy [Volatility]: Sell Signal (Breakout below Lower Band after squeeze). Adding ", Weight_Volatility, " votes.");
         } else {
             Print("Strategy [Volatility]: No signal (Low volatility squeeze detected, but no breakout yet).");
         }
@@ -409,16 +450,16 @@ void AnalyzeCorrelation() {
     if (correlationSymbolChange > 0.001) { // Threshold for "significant" move (e.g. 0.1%)
         // If current symbol hasn't moved as much, or is lagging, it might follow
         if (currentSymbolChange < correlationSymbolChange * 0.5) { // Current symbol lagging
-             BuyVotes++;
-             Print("Strategy [Correlation]: Buy Signal (Positive correlation with ", CorrelationSymbol, ", which is bullish).");
+             BuyVotes += Weight_Correlation;
+             Print("Strategy [Correlation]: Buy Signal (Positive correlation with ", CorrelationSymbol, ", which is bullish). Adding ", Weight_Correlation, " votes.");
              signalFound = true;
         }
     }
     // If CorrelationSymbol shows strong bearish movement, consider Sell for current.
     else if (correlationSymbolChange < -0.001) { // Threshold for "significant" move
         if (currentSymbolChange > correlationSymbolChange * 0.5) { // Current symbol lagging (more positive or less negative)
-             SellVotes++;
-             Print("Strategy [Correlation]: Sell Signal (Positive correlation with ", CorrelationSymbol, ", which is bearish).");
+             SellVotes += Weight_Correlation;
+             Print("Strategy [Correlation]: Sell Signal (Positive correlation with ", CorrelationSymbol, ", which is bearish). Adding ", Weight_Correlation, " votes.");
              signalFound = true;
         }
     }
@@ -453,8 +494,8 @@ void AnalyzePricePatterns() {
     if (close1 < open1 && close0 > open0 && open0 <= close1 && close0 >= open1) {
         // Check if it's at a potential support (e.g. recent low or MA) for confirmation
         // For simplicity, we'll just use the pattern itself for now
-        BuyVotes++;
-        Print("Strategy [PricePattern]: Buy Signal (Bullish Engulfing).");
+        BuyVotes += Weight_PricePatterns;
+        Print("Strategy [PricePattern]: Buy Signal (Bullish Engulfing). Adding ", Weight_PricePatterns, " votes.");
     }
 
     // Bearish Engulfing
@@ -464,8 +505,8 @@ void AnalyzePricePatterns() {
     // 4. Current bar's close is below or equal to previous bar's open
     // (More strict: current body engulfs previous body: open0 > close1 && close0 < open1)
     else if (close1 > open1 && close0 < open0 && open0 >= close1 && close0 <= open1) {
-        SellVotes++;
-        Print("Strategy [PricePattern]: Sell Signal (Bearish Engulfing).");
+        SellVotes += Weight_PricePatterns;
+        Print("Strategy [PricePattern]: Sell Signal (Bearish Engulfing). Adding ", Weight_PricePatterns, " votes.");
     } else {
         Print("Strategy [PricePattern]: No signal (No Engulfing pattern detected).");
     }
@@ -505,8 +546,8 @@ void AnalyzeSmartMoneyConcepts() {
                     double obLow = iLow(Symbol(), Period(), j+1);
                     if (iClose(Symbol(), Period(), 0) >= obLow && iClose(Symbol(), Period(), 0) <= obHigh &&
                         iLow(Symbol(), Period(), 0) <= obHigh && iLow(Symbol(), Period(), 0) >= obLow * 0.98 ) { // Price entered OB zone
-                        BuyVotes++;
-                        Print("Strategy [SMC]: Buy Signal (Retest of Bullish Order Block after BoS).");
+                        BuyVotes += Weight_SMC;
+                        Print("Strategy [SMC]: Buy Signal (Retest of Bullish Order Block after BoS). Adding ", Weight_SMC, " votes.");
                         return; // Found a signal
                     }
                 }
@@ -524,8 +565,8 @@ void AnalyzeSmartMoneyConcepts() {
                     double obLow = iLow(Symbol(), Period(), j+1);
                     if (iClose(Symbol(), Period(), 0) <= obHigh && iClose(Symbol(), Period(), 0) >= obLow &&
                         iHigh(Symbol(), Period(), 0) >= obLow && iHigh(Symbol(), Period(), 0) <= obHigh * 1.02) { // Price entered OB zone
-                        SellVotes++;
-                        Print("Strategy [SMC]: Sell Signal (Retest of Bearish Order Block after BoS).");
+                        SellVotes += Weight_SMC;
+                        Print("Strategy [SMC]: Sell Signal (Retest of Bearish Order Block after BoS). Adding ", Weight_SMC, " votes.");
                         return; // Found a signal
                     }
                 }
@@ -848,8 +889,8 @@ void AnalyzeHeadAndShoulders() {
                     double slope = (p4_price - p2_price) / (p4_index - p2_index);
                     double neckline_val = p4_price + slope * (0 - p4_index);
                     if (iClose(Symbol(), Period(), 0) < neckline_val) {
-                        SellVotes++;
-                        Print("Strategy [H&S]: Sell Signal (Head and Shoulders pattern confirmed by neckline break).");
+                        SellVotes += Weight_HnS;
+                        Print("Strategy [H&S]: Sell Signal (Head and Shoulders pattern confirmed by neckline break). Adding ", Weight_HnS, " votes.");
                         return;
                     }
                 }
@@ -864,8 +905,8 @@ void AnalyzeHeadAndShoulders() {
                     double slope = (p4_price - p2_price) / (p4_index - p2_index);
                     double neckline_val = p4_price + slope * (0 - p4_index);
                     if (iClose(Symbol(), Period(), 0) > neckline_val) {
-                        BuyVotes++;
-                        Print("Strategy [H&S]: Buy Signal (Inverse Head and Shoulders pattern confirmed by neckline break).");
+                        BuyVotes += Weight_HnS;
+                        Print("Strategy [H&S]: Buy Signal (Inverse Head and Shoulders pattern confirmed by neckline break). Adding ", Weight_HnS, " votes.");
                         return;
                     }
                 }
@@ -875,7 +916,6 @@ void AnalyzeHeadAndShoulders() {
 
     Print("Strategy [H&S]: No signal (No H&S pattern detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 9: RSI Divergence (MQL4)                                |
 //+------------------------------------------------------------------+
@@ -930,8 +970,8 @@ void AnalyzeRsiDivergence() {
             double rsi_h1 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, H1_index);
             double rsi_h2 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, H2_index);
             if(rsi_h2 < rsi_h1 && rsi_h1 > 50 && rsi_h2 > 50) {
-                SellVotes++;
-                Print("Strategy [RSI Divergence]: Sell Signal (Bearish divergence confirmed).");
+                SellVotes += Weight_RsiDiv;
+                Print("Strategy [RSI Divergence]: Sell Signal (Bearish divergence confirmed). Adding ", Weight_RsiDiv, " votes.");
                 return;
             }
         }
@@ -943,8 +983,8 @@ void AnalyzeRsiDivergence() {
             double rsi_l1 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, L1_index);
             double rsi_l2 = iRSI(Symbol(), Period(), RSI_Period, RSI_AppliedPrice, L2_index);
             if(rsi_l2 > rsi_l1 && rsi_l1 < 50 && rsi_l2 < 50) {
-                BuyVotes++;
-                Print("Strategy [RSI Divergence]: Buy Signal (Bullish divergence confirmed).");
+                BuyVotes += Weight_RsiDiv;
+                Print("Strategy [RSI Divergence]: Buy Signal (Bullish divergence confirmed). Adding ", Weight_RsiDiv, " votes.");
                 return;
             }
         }
@@ -952,7 +992,6 @@ void AnalyzeRsiDivergence() {
 
     Print("Strategy [RSI Divergence]: No signal (No divergence detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 10: RSI Overbought/Oversold Crossover (MQL4)            |
 //+------------------------------------------------------------------+
@@ -962,21 +1001,20 @@ void AnalyzeRsiCrossover() {
 
     // Check for Bearish Crossover
     if (rsi_shift2 >= RSI_Overbought_Level && rsi_shift1 < RSI_Overbought_Level) {
-        SellVotes++;
-        Print("Strategy [RSI Crossover]: Sell Signal (RSI crossed down from Overbought zone).");
+        SellVotes += Weight_RsiCross;
+        Print("Strategy [RSI Crossover]: Sell Signal (RSI crossed down from Overbought zone). Adding ", Weight_RsiCross, " votes.");
         return;
     }
 
     // Check for Bullish Crossover
     if (rsi_shift2 <= RSI_Oversold_Level && rsi_shift1 > RSI_Oversold_Level) {
-        BuyVotes++;
-        Print("Strategy [RSI Crossover]: Buy Signal (RSI crossed up from Oversold zone).");
+        BuyVotes += Weight_RsiCross;
+        Print("Strategy [RSI Crossover]: Buy Signal (RSI crossed up from Oversold zone). Adding ", Weight_RsiCross, " votes.");
         return;
     }
 
     Print("Strategy [RSI Crossover]: No signal (No OB/OS crossover detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 11: Stochastic Oscillator Crossover (MQL4)              |
 //+------------------------------------------------------------------+
@@ -989,8 +1027,8 @@ void AnalyzeStochasticCrossover() {
     // Check for Bearish Crossover
     if (k_shift1 > Stoch_Overbought_Level && d_shift1 > Stoch_Overbought_Level) {
         if (k_shift2 > d_shift2 && k_shift1 < d_shift1) {
-            SellVotes++;
-            Print("Strategy [Stochastic]: Sell Signal (K crossed below D in Overbought zone).");
+            SellVotes += Weight_StochCross;
+            Print("Strategy [Stochastic]: Sell Signal (K crossed below D in Overbought zone). Adding ", Weight_StochCross, " votes.");
             return;
         }
     }
@@ -998,15 +1036,14 @@ void AnalyzeStochasticCrossover() {
     // Check for Bullish Crossover
     if (k_shift1 < Stoch_Oversold_Level && d_shift1 < Stoch_Oversold_Level) {
         if (k_shift2 < d_shift2 && k_shift1 > d_shift1) {
-            BuyVotes++;
-            Print("Strategy [Stochastic]: Buy Signal (K crossed above D in Oversold zone).");
+            BuyVotes += Weight_StochCross;
+            Print("Strategy [Stochastic]: Buy Signal (K crossed above D in Oversold zone). Adding ", Weight_StochCross, " votes.");
             return;
         }
     }
 
     Print("Strategy [Stochastic Crossover]: No signal (No OB/OS crossover detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 12: MACD Crossover (MQL4)                               |
 //+------------------------------------------------------------------+
@@ -1018,21 +1055,20 @@ void AnalyzeMacdCrossover() {
 
     // Check for Bullish Crossover
     if (main_shift2 <= signal_shift2 && main_shift1 > signal_shift1) {
-        BuyVotes++;
-        Print("Strategy [MACD Crossover]: Buy Signal (Main line crossed above Signal line).");
+        BuyVotes += Weight_MacdCross;
+        Print("Strategy [MACD Crossover]: Buy Signal (Main line crossed above Signal line). Adding ", Weight_MacdCross, " votes.");
         return;
     }
 
     // Check for Bearish Crossover
     if (main_shift2 >= signal_shift2 && main_shift1 < signal_shift1) {
-        SellVotes++;
-        Print("Strategy [MACD Crossover]: Sell Signal (Main line crossed below Signal line).");
+        SellVotes += Weight_MacdCross;
+        Print("Strategy [MACD Crossover]: Sell Signal (Main line crossed below Signal line). Adding ", Weight_MacdCross, " votes.");
         return;
     }
 
     Print("Strategy [MACD Crossover]: No signal (No crossover detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 14: Inside/Outside Bars (MQL4)                          |
 //+------------------------------------------------------------------+
@@ -1041,13 +1077,13 @@ void AnalyzeInsideOutsideBars() {
     bool isInsideBar = iHigh(Symbol(), Period(), 1) < iHigh(Symbol(), Period(), 2) && iLow(Symbol(), Period(), 1) > iLow(Symbol(), Period(), 2);
     if (isInsideBar) {
         if (iClose(Symbol(), Period(), 0) > iHigh(Symbol(), Period(), 1)) {
-            BuyVotes++;
-            Print("Strategy [I/O Bars]: Buy Signal (Breakout of Inside Bar high).");
+            BuyVotes += Weight_IOBars;
+            Print("Strategy [I/O Bars]: Buy Signal (Breakout of Inside Bar high). Adding ", Weight_IOBars, " votes.");
             return;
         }
         if (iClose(Symbol(), Period(), 0) < iLow(Symbol(), Period(), 1)) {
-            SellVotes++;
-            Print("Strategy [I/O Bars]: Sell Signal (Breakout of Inside Bar low).");
+            SellVotes += Weight_IOBars;
+            Print("Strategy [I/O Bars]: Sell Signal (Breakout of Inside Bar low). Adding ", Weight_IOBars, " votes.");
             return;
         }
     }
@@ -1056,20 +1092,19 @@ void AnalyzeInsideOutsideBars() {
     bool isOutsideBar = iHigh(Symbol(), Period(), 1) > iHigh(Symbol(), Period(), 2) && iLow(Symbol(), Period(), 1) < iLow(Symbol(), Period(), 2);
     if(isOutsideBar) {
         if(iClose(Symbol(), Period(), 1) > iOpen(Symbol(), Period(), 1)) {
-            BuyVotes++;
-            Print("Strategy [I/O Bars]: Buy Signal (Bullish Outside Bar detected).");
+            BuyVotes += Weight_IOBars;
+            Print("Strategy [I/O Bars]: Buy Signal (Bullish Outside Bar detected). Adding ", Weight_IOBars, " votes.");
             return;
         }
         if(iClose(Symbol(), Period(), 1) < iOpen(Symbol(), Period(), 1)) {
-            SellVotes++;
-            Print("Strategy [I/O Bars]: Sell Signal (Bearish Outside Bar detected).");
+            SellVotes += Weight_IOBars;
+            Print("Strategy [I/O Bars]: Sell Signal (Bearish Outside Bar detected). Adding ", Weight_IOBars, " votes.");
             return;
         }
     }
 
     Print("Strategy [I/O Bars]: No signal (No Inside Bar breakout or Outside Bar detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 15: Pin Bars (Hammer / Shooting Star) (MQL4)            |
 //+------------------------------------------------------------------+
@@ -1087,21 +1122,20 @@ void AnalyzePinBars() {
 
     // Bullish Pin Bar (Hammer)
     if (lowerWick > (bodySize * PinBar_Wick_to_Body_Ratio) && upperWick < bodySize) {
-        BuyVotes++;
-        Print("Strategy [Pin Bars]: Buy Signal (Bullish Pin Bar / Hammer detected).");
+        BuyVotes += Weight_PinBars;
+        Print("Strategy [Pin Bars]: Buy Signal (Bullish Pin Bar / Hammer detected). Adding ", Weight_PinBars, " votes.");
         return;
     }
 
     // Bearish Pin Bar (Shooting Star)
     if (upperWick > (bodySize * PinBar_Wick_to_Body_Ratio) && lowerWick < bodySize) {
-        SellVotes++;
-        Print("Strategy [Pin Bars]: Sell Signal (Bearish Pin Bar / Shooting Star detected).");
+        SellVotes += Weight_PinBars;
+        Print("Strategy [Pin Bars]: Sell Signal (Bearish Pin Bar / Shooting Star detected). Adding ", Weight_PinBars, " votes.");
         return;
     }
 
     Print("Strategy [Pin Bars]: No signal (No valid Pin Bar detected).");
 }
-
 //+------------------------------------------------------------------+
 //| Strategy 17: Fair Value Gaps (Imbalances) (MQL4)                 |
 //+------------------------------------------------------------------+
@@ -1123,8 +1157,8 @@ void AnalyzeFairValueGaps() {
             }
             if(!filled) {
                 if(iClose(Symbol(), Period(), 0) <= bullish_fvg_top && iClose(Symbol(), Period(), 0) >= bullish_fvg_bottom) {
-                    SellVotes++;
-                    Print("Strategy [FVG]: Sell Signal (Price entered a Bullish FVG zone).");
+                    SellVotes += Weight_FVG;
+                    Print("Strategy [FVG]: Sell Signal (Price entered a Bullish FVG zone). Adding ", Weight_FVG, " votes.");
                     return;
                 }
             }
@@ -1143,8 +1177,8 @@ void AnalyzeFairValueGaps() {
             }
             if(!filled) {
                 if(iClose(Symbol(), Period(), 0) >= bearish_fvg_bottom && iClose(Symbol(), Period(), 0) <= bearish_fvg_top) {
-                    BuyVotes++;
-                    Print("Strategy [FVG]: Buy Signal (Price entered a Bearish FVG zone).");
+                    BuyVotes += Weight_FVG;
+                    Print("Strategy [FVG]: Buy Signal (Price entered a Bearish FVG zone). Adding ", Weight_FVG, " votes.");
                     return;
                 }
             }
@@ -1152,6 +1186,37 @@ void AnalyzeFairValueGaps() {
     }
 
     Print("Strategy [FVG]: No signal (No recent, unfilled FVG is being tested).");
+}
+
+//+------------------------------------------------------------------+
+//| Strategy 16: Three-Bar Reversal (MQL4)                           |
+//+------------------------------------------------------------------+
+void AnalyzeThreeBarReversal() {
+    // Bullish Three-Bar Reversal
+    bool isLowerLow = iLow(Symbol(), Period(), 2) < iLow(Symbol(), Period(), 3);
+    bool isLowerHigh = iHigh(Symbol(), Period(), 2) < iHigh(Symbol(), Period(), 3);
+    bool isHigherLow_reversal = iLow(Symbol(), Period(), 1) > iLow(Symbol(), Period(), 2);
+    bool isBreakoutClose = iClose(Symbol(), Period(), 1) > iHigh(Symbol(), Period(), 2);
+
+    if (isLowerLow && isLowerHigh && isHigherLow_reversal && isBreakoutClose) {
+        BuyVotes += Weight_3BarReversal;
+        Print("Strategy [3-Bar Reversal]: Buy Signal (Bullish reversal pattern detected). Adding ", Weight_3BarReversal, " votes.");
+        return;
+    }
+
+    // Bearish Three-Bar Reversal
+    bool isHigherHigh = iHigh(Symbol(), Period(), 2) > iHigh(Symbol(), Period(), 3);
+    bool isHigherLow_trend = iLow(Symbol(), Period(), 2) > iLow(Symbol(), Period(), 3);
+    bool isLowerHigh_reversal = iHigh(Symbol(), Period(), 1) < iHigh(Symbol(), Period(), 2);
+    bool isBreakdownClose = iClose(Symbol(), Period(), 1) < iLow(Symbol(), Period(), 2);
+
+    if (isHigherHigh && isHigherLow_trend && isLowerHigh_reversal && isBreakdownClose) {
+        SellVotes += Weight_3BarReversal;
+        Print("Strategy [3-Bar Reversal]: Sell Signal (Bearish reversal pattern detected). Adding ", Weight_3BarReversal, " votes.");
+        return;
+    }
+
+    Print("Strategy [3-Bar Reversal]: No signal (No reversal pattern detected).");
 }
 
 //+------------------------------------------------------------------+
