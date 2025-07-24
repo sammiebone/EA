@@ -70,9 +70,9 @@ int OnInit() {
         return(INIT_FAILED);
     }
 
-    hZigZag = iCustom(_Symbol, _Period, "ZigZag", Execution_ZigZag_Depth, 5, 3);
+    hZigZag = iCustom(_Symbol, _Period, "Examples/ZigZag", Execution_ZigZag_Depth, 5, 3);
     if(hZigZag == INVALID_HANDLE) {
-        printf("Error creating ZigZag indicator");
+        printf("Error creating ZigZag indicator (check path 'Examples/ZigZag')");
         return(INIT_FAILED);
     }
 
